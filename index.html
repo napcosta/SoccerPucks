@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Soccer Pucks</title>
+<link rel="stylesheet" href="css/style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="game-canvas"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="scoreboard">
+    <span class="team-label red">RED</span>
+    <span id="score">0 — 0</span>
+    <span class="team-label blue">BLUE</span>
+  </div>
+  <div id="timer">100</div>
+  <div id="power-bar"><div id="power-fill"></div></div>
+  <div id="banner" class="hidden"></div>
+</div>
+
+<div id="menu">
+  <h1>SOCCER PUCKS</h1>
+  <p class="subtitle">3D arcade ball — pick your hero</p>
+  <div id="hero-pick">
+    <button class="hero-btn selected" data-hero="sam">
+      <span class="hero-name">Sam</span>
+      <span class="hero-power">Power: Dash</span>
+    </button>
+    <button class="hero-btn" data-hero="tesla">
+      <span class="hero-name">Tesla</span>
+      <span class="hero-power">Power: Magnet</span>
+    </button>
+  </div>
+  <button id="start-btn">Local Play</button>
+  <p class="controls-hint">WASD / Arrows to move &nbsp;·&nbsp; Space to shoot &nbsp;·&nbsp; Shift for power</p>
+</div>
+
+<div id="loading" class="hidden">Loading stadium…</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
