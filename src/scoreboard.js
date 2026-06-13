@@ -95,13 +95,13 @@ const GLYPHS = {
     [0, 1, 1, 1, 0],
   ],
   ':': [
-    [0, 0, 0, 0, 0],
-    [0, 0, 1, 0, 0],
-    [0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0],
-    [0, 0, 1, 0, 0],
-    [0, 0, 0, 0, 0],
+    [0],
+    [1],
+    [0],
+    [0],
+    [0],
+    [1],
+    [0],
   ],
 };
 
@@ -117,25 +117,34 @@ function drawGlyph(ctx, glyph, x, y, dotR, colW, rowH, color) {
   }
 }
 
+function glyphWidth(ch, colW) {
+  return ch === ':' ? colW : 5 * colW;
+}
+
+function advanceWidth(ch, nextCh, colW, charGap) {
+  const colonPad = 10;
+  if (ch === ':') return colW + colonPad + (nextCh ? charGap + colonPad : 0);
+  return 5 * colW + (nextCh ? (nextCh === ':' ? charGap + 6 : charGap) : 0);
+}
+
 function drawString(ctx, text, centerX, y, color) {
   const dotR = 4.2;
   const colW = 11;
   const rowH = 11;
-  const charW = 5 * colW;
   const charGap = 7;
-  const colonGap = 4;
+
   let totalW = 0;
   for (let i = 0; i < text.length; i++) {
-    totalW += text[i] === ':' ? colW + colonGap * 2 : charW;
-    if (i < text.length - 1) totalW += text[i] === ':' || text[i + 1] === ':' ? colonGap : charGap;
+    totalW += advanceWidth(text[i], text[i + 1], colW, charGap);
   }
 
   let x = centerX - totalW / 2;
-  for (const ch of text) {
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
     const glyph = GLYPHS[ch];
     if (!glyph) continue;
-    drawGlyph(ctx, glyph, x, y, dotR, ch === ':' ? colW : colW, rowH, color);
-    x += (ch === ':' ? colW + colonGap * 2 : charW) + (ch === ':' ? colonGap : charGap);
+    drawGlyph(ctx, glyph, x, y, dotR, colW, rowH, color);
+    x += advanceWidth(ch, text[i + 1], colW, charGap);
   }
 }
 
