@@ -39,6 +39,19 @@ export async function loadAssets() {
   };
 }
 
+export function footLift(object3D) {
+  const box = new THREE.Box3();
+  let found = false;
+  object3D.updateMatrixWorld(true);
+  object3D.traverse((node) => {
+    if (node.isMesh || node.isSkinnedMesh) {
+      box.expandByObject(node);
+      found = true;
+    }
+  });
+  return !found || box.isEmpty() ? 0 : -box.min.y;
+}
+
 export function cloneHeroScene(gltf) {
   const clone = SkeletonUtils.clone(gltf.scene);
   clone.traverse((node) => {

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { PITCH } from './constants.js';
+import { PITCH, GOAL } from './constants.js';
+import { footLift } from './assets.js';
 
 export function createRenderer(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -163,7 +164,8 @@ function addGoals(scene, goalGltf) {
         });
       }
     });
-    goal.position.set(0, 0, sign * (PITCH.halfLength + 0.1));
+    goal.scale.setScalar(GOAL.scale);
+    goal.position.set(0, footLift(goal) + PITCH.surfaceY, sign * (PITCH.halfLength + 0.1));
     goal.rotation.y = sign > 0 ? Math.PI : 0;
     scene.add(goal);
   }

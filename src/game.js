@@ -5,6 +5,7 @@ import {
   integrate,
   clampSpeed,
   collideWalls,
+  collideGoalPosts,
   collideCircles,
   isTouching,
   goalScored,
@@ -12,7 +13,7 @@ import {
 import { readCommands } from './input.js';
 import { computeAICommands } from './ai.js';
 import { createHero } from './heroes.js';
-import { cloneHeroScene, tintHero } from './assets.js';
+import { cloneHeroScene, tintHero, footLift } from './assets.js';
 import { spawnDashSmoke } from './effects.js';
 import { DEBUG } from './debug.js';
 
@@ -49,6 +50,7 @@ export class Game {
   createBall() {
     const mesh = cloneHeroScene(this.assets.ball);
     mesh.scale.setScalar(BALL.radius / 1.0);
+    const surfaceY = footLift(mesh) + PITCH.surfaceY;
     this.scene.add(mesh);
 
     const mixer = new THREE.AnimationMixer(mesh);
@@ -68,6 +70,7 @@ export class Game {
       mesh,
       mixer,
       heading: 0,
+      surfaceY,
     };
   }
 
@@ -77,6 +80,7 @@ export class Game {
     const meshScale = (PLAYER.radius * 2) / 2.96;
     mesh.scale.setScalar(meshScale);
     tintHero(mesh, TEAM_COLORS[team]);
+    const surfaceY = footLift(mesh) + PITCH.surfaceY;
     this.scene.add(mesh);
 
     const mixer = new THREE.AnimationMixer(mesh);
@@ -101,6 +105,7 @@ export class Game {
       facingZ: -Math.sign(spawnZ),
       shootHeld: false,
       powerHeld: false,
+      surfaceY,
     };
     player.onPowerFX = (type) => this.spawnPowerFX(player, type);
     player.hero = createHero(heroKind, player);
@@ -202,6 +207,7 @@ export class Game {
       clampSpeed(body, PLAYER.maxSpeed * (justDashed ? 1.9 : 1));
       integrate(body, dt, PLAYER.damping);
       collideWalls(body, 0.2);
+      collideGoalPosts(body, 0.2);
 
       updateFacingTowardBall(p, ballBody);
 
@@ -226,6 +232,7 @@ export class Game {
     integrate(ballBody, dt, BALL.damping);
     clampSpeed(ballBody, BALL.maxSpeed);
     collideWalls(ballBody, BALL.wallRestitution);
+    collideGoalPosts(ballBody, BALL.wallRestitution);
 
     for (const p of this.players) {
       collideCircles(p.body, ballBody, BALL.playerRestitution, 0.15);
@@ -279,14 +286,14 @@ export class Game {
   syncVisuals(dt) {
     const ballBody = this.ball.body;
     for (const p of this.players) {
-      p.mesh.position.set(p.body.x, 0, p.body.z);
+      p.mesh.position.set(p.body.x, p.surfaceY, p.body.z);
       if (this.state !== 'playing') updateFacingTowardBall(p, ballBody);
       const targetRot = Math.atan2(p.facingX, p.facingZ);
       p.mesh.rotation.y = dampAngle(p.mesh.rotation.y, targetRot, 12, dt);
     }
 
     const b = this.ball;
-    b.mesh.position.set(b.body.x, 0.02, b.body.z);
+    b.mesh.position.set(b.body.x, b.surfaceY, b.body.z);
     const speed = Math.hypot(b.body.vx, b.body.vz);
     if (speed > 0.4) {
       const target = Math.atan2(b.body.vx, b.body.vz);

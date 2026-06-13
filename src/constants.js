@@ -1,9 +1,18 @@
+const GOAL_SCALE = 2 / 3;
+
 export const PITCH = {
   halfWidth: 9,
   halfLength: 13,
-  goalHalfWidth: 3.4,
-  goalDepth: 1.6,
+  goalHalfWidth: 3.4 * GOAL_SCALE,
+  goalDepth: 1.6 * GOAL_SCALE,
   wallHeight: 1.0,
+  surfaceY: 0.015,
+};
+
+export const GOAL = {
+  scale: GOAL_SCALE,
+  postRadius: 0.24 * GOAL_SCALE,
+  lineZ: PITCH.halfLength + 0.1,
 };
 
 export const PLAYER = {

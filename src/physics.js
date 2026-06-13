@@ -1,4 +1,4 @@
-import { PITCH, PLAYER, BALL } from './constants.js';
+import { PITCH, PLAYER, BALL, GOAL } from './constants.js';
 
 export function createBody(x, z, radius) {
   return { x, z, vx: 0, vz: 0, radius };
@@ -55,6 +55,46 @@ export function collideWalls(body, restitution) {
       body.x = -sideMax;
       if (body.vx < 0) body.vx = -body.vx * restitution;
     }
+  }
+}
+
+const GOAL_POSTS = buildGoalPosts();
+
+function buildGoalPosts() {
+  const posts = [];
+  const gw = PITCH.goalHalfWidth;
+  for (const sign of [-1, 1]) {
+    const z = sign * GOAL.lineZ;
+    posts.push({ x: -gw, z, radius: GOAL.postRadius });
+    posts.push({ x: gw, z, radius: GOAL.postRadius });
+  }
+  return posts;
+}
+
+function collideStaticCircle(body, post, restitution) {
+  const dx = body.x - post.x;
+  const dz = body.z - post.z;
+  const dist = Math.hypot(dx, dz);
+  const minDist = body.radius + post.radius;
+  if (dist >= minDist || dist === 0) return false;
+
+  const nx = dx / dist;
+  const nz = dz / dist;
+  body.x += nx * (minDist - dist);
+  body.z += nz * (minDist - dist);
+
+  const velAlongNormal = body.vx * nx + body.vz * nz;
+  if (velAlongNormal < 0) {
+    const impulse = -(1 + restitution) * velAlongNormal;
+    body.vx += impulse * nx;
+    body.vz += impulse * nz;
+  }
+  return true;
+}
+
+export function collideGoalPosts(body, restitution) {
+  for (const post of GOAL_POSTS) {
+    collideStaticCircle(body, post, restitution);
   }
 }
 
