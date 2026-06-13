@@ -1,7 +1,17 @@
 import * as THREE from 'three';
 import { TUNING } from './tuning.js';
-const CANVAS_W = 640;
-const CANVAS_H = 240;
+const CANVAS_W = 960;
+const CANVAS_H = 180;
+const BOARD_W = 9.8;
+const BOARD_H = 1.65;
+
+const LAYOUT = {
+  redX: CANVAS_W * 0.17,
+  timeX: CANVAS_W * 0.5,
+  blueX: CANVAS_W * 0.83,
+  labelY: 20,
+  scoreY: 74,
+};
 
 const GLYPHS = {
   '0': [
@@ -121,21 +131,20 @@ function glyphWidth(ch, colW) {
   return ch === ':' ? colW : 5 * colW;
 }
 
-function advanceWidth(ch, nextCh, colW, charGap) {
-  const colonPad = 10;
-  if (ch === ':') return colW + colonPad + (nextCh ? charGap + colonPad : 0);
-  return 5 * colW + (nextCh ? (nextCh === ':' ? charGap + 6 : charGap) : 0);
-}
-
-function drawString(ctx, text, centerX, y, color) {
-  const dotR = 4.2;
-  const colW = 11;
-  const rowH = 11;
-  const charGap = 7;
+function drawString(
+  ctx,
+  text,
+  centerX,
+  y,
+  color,
+  { dotR = 5.3, colW = 12, rowH = 12, charGap = 16, colonGap = 30 } = {}
+) {
+  const gapAfter = (ch, nextCh) => (ch === ':' || nextCh === ':' ? colonGap : charGap);
 
   let totalW = 0;
   for (let i = 0; i < text.length; i++) {
-    totalW += advanceWidth(text[i], text[i + 1], colW, charGap);
+    totalW += glyphWidth(text[i], colW);
+    if (i < text.length - 1) totalW += gapAfter(text[i], text[i + 1]);
   }
 
   let x = centerX - totalW / 2;
@@ -144,7 +153,7 @@ function drawString(ctx, text, centerX, y, color) {
     const glyph = GLYPHS[ch];
     if (!glyph) continue;
     drawGlyph(ctx, glyph, x, y, dotR, colW, rowH, color);
-    x += advanceWidth(ch, text[i + 1], colW, charGap);
+    x += glyphWidth(ch, colW) + (i < text.length - 1 ? gapAfter(ch, text[i + 1]) : 0);
   }
 }
 
@@ -166,12 +175,10 @@ export function createScoreboard() {
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
 
-  const boardW = 8;
-  const boardH = 2.1;
   const group = new THREE.Group();
 
   const frame = new THREE.Mesh(
-    new THREE.BoxGeometry(boardW + 0.14, boardH + 0.14, 0.1),
+    new THREE.BoxGeometry(BOARD_W + 0.14, BOARD_H + 0.14, 0.1),
     new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.85, metalness: 0.1 })
   );
   frame.position.z = -0.05;
@@ -179,7 +186,7 @@ export function createScoreboard() {
   group.add(frame);
 
   const face = new THREE.Mesh(
-    new THREE.PlaneGeometry(boardW, boardH),
+    new THREE.PlaneGeometry(BOARD_W, BOARD_H),
     new THREE.MeshBasicMaterial({ map: texture, toneMapped: false })
   );
   group.add(face);
@@ -198,19 +205,25 @@ export function createScoreboard() {
     ctx.strokeRect(4, 4, CANVAS_W - 8, CANVAS_H - 8);
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = '700 22px "Segoe UI", Arial, sans-serif';
+    ctx.font = '700 34px "Segoe UI", Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText('RED', CANVAS_W * 0.17, 28);
-    ctx.fillText('TIME', CANVAS_W * 0.5, 28);
-    ctx.fillText('BLUE', CANVAS_W * 0.83, 28);
+    ctx.fillText('RED', LAYOUT.redX, LAYOUT.labelY);
+    ctx.fillText('TIME', LAYOUT.timeX, LAYOUT.labelY);
+    ctx.fillText('BLUE', LAYOUT.blueX, LAYOUT.labelY);
 
-    const scoreY = 88;
-    drawString(ctx, String(red).padStart(2, '0'), CANVAS_W * 0.17, scoreY, '#e83838');
-    drawString(ctx, String(blue).padStart(2, '0'), CANVAS_W * 0.83, scoreY, '#e83838');
+    drawString(ctx, String(red).padStart(2, '0'), LAYOUT.redX, LAYOUT.scoreY, '#e83838', {
+      charGap: 22,
+    });
+    drawString(ctx, String(blue).padStart(2, '0'), LAYOUT.blueX, LAYOUT.scoreY, '#e83838', {
+      charGap: 22,
+    });
 
     const timeText = goldenGoal ? '00:00' : formatTime(timeLeft);
-    drawString(ctx, timeText, CANVAS_W * 0.5, scoreY, '#38d858');
+    drawString(ctx, timeText, LAYOUT.timeX, LAYOUT.scoreY, '#38d858', {
+      charGap: 22,
+      colonGap: 18,
+    });
 
     texture.needsUpdate = true;
   }
