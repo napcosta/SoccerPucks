@@ -123,8 +123,7 @@ export class Game {
       p.body.z = p.spawnZ;
       p.body.vx = 0;
       p.body.vz = 0;
-      p.facingX = 0;
-      p.facingZ = -Math.sign(p.spawnZ);
+      updateFacingTowardBall(p, this.ball.body);
       if (p.hero.active) p.hero.release?.(this.ball.body);
       this.playAction(p, 'Idle');
     }
@@ -198,10 +197,7 @@ export class Game {
       integrate(body, dt, PLAYER.damping);
       collideWalls(body, 0.2);
 
-      if (raw.moveX !== 0 || raw.moveZ !== 0) {
-        p.facingX = raw.moveX;
-        p.facingZ = raw.moveZ;
-      }
+      updateFacingTowardBall(p, ballBody);
 
       p.hero.update(dt, raw, ballBody);
 
@@ -272,8 +268,10 @@ export class Game {
   }
 
   syncVisuals(dt) {
+    const ballBody = this.ball.body;
     for (const p of this.players) {
       p.mesh.position.set(p.body.x, 0, p.body.z);
+      if (this.state !== 'playing') updateFacingTowardBall(p, ballBody);
       const targetRot = Math.atan2(p.facingX, p.facingZ);
       p.mesh.rotation.y = dampAngle(p.mesh.rotation.y, targetRot, 12, dt);
     }
@@ -363,4 +361,14 @@ function dampAngle(current, target, lambda, dt) {
   while (delta > Math.PI) delta -= Math.PI * 2;
   while (delta < -Math.PI) delta += Math.PI * 2;
   return current + delta * (1 - Math.exp(-lambda * dt));
+}
+
+function updateFacingTowardBall(player, ballBody) {
+  const dx = ballBody.x - player.body.x;
+  const dz = ballBody.z - player.body.z;
+  const len = Math.hypot(dx, dz);
+  if (len > 0.001) {
+    player.facingX = dx / len;
+    player.facingZ = dz / len;
+  }
 }
