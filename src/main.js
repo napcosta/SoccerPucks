@@ -11,8 +11,6 @@ const hudRoot = document.getElementById('hud');
 const loading = document.getElementById('loading');
 
 const hud = {
-  score: document.getElementById('score'),
-  timer: document.getElementById('timer'),
   powerFill: document.getElementById('power-fill'),
   banner: document.getElementById('banner'),
 };
@@ -30,6 +28,7 @@ const renderer = createRenderer(canvas);
 const camera = createCamera();
 
 let scene = null;
+let scoreboard = null;
 let game = null;
 let assets = null;
 let lastTime = performance.now();
@@ -44,7 +43,7 @@ async function ensureAssets() {
   if (assets) return;
   loading.classList.remove('hidden');
   assets = await loadAssets();
-  scene = buildWorld(assets);
+  ({ scene, scoreboard } = buildWorld(assets));
   loading.classList.add('hidden');
 }
 
@@ -61,7 +60,7 @@ document.getElementById('start-btn').addEventListener('click', async () => {
   hudRoot.classList.remove('hidden');
 
   game?.dispose();
-  game = new Game({ scene, camera, assets, hud, playerHero: selectedHero });
+  game = new Game({ scene, camera, assets, hud, scoreboard, playerHero: selectedHero });
   game.onMatchEnd = () => {
     game.dispose();
     game = null;
@@ -75,6 +74,7 @@ function frame(now) {
   lastTime = now;
 
   if (game) game.update(dt);
+  scoreboard?.syncPosition();
   updatePhysicsOverlay(game, dt);
   if (scene) renderer.render(scene, camera);
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { PITCH, GOAL } from './constants.js';
 import { footLift } from './assets.js';
+import { createScoreboard } from './scoreboard.js';
 
 export function createRenderer(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -53,7 +54,7 @@ export function buildWorld(assets) {
   scene.add(ground);
 
   const pitchTex = assets.pitchTexture;
-  pitchTex.repeat.set(4, 6);
+  pitchTex.repeat.set(2, 3);
   const pitchMat = new THREE.MeshStandardMaterial({
     map: pitchTex,
     roughness: 0.35,
@@ -81,7 +82,10 @@ export function buildWorld(assets) {
   });
   scene.add(stadium);
 
-  return scene;
+  const scoreboard = createScoreboard();
+  scene.add(scoreboard.group);
+
+  return { scene, scoreboard };
 }
 
 function addMarkings(scene) {

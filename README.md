@@ -15,14 +15,11 @@ The game must be served over HTTP (GLB/texture loading doesn't work from `file:/
 Any static server works, from this folder:
 
 ```powershell
-# with Python
-python -m http.server 8000
+# PowerShell (no install needed) — double-click serve.bat
+.\serve.ps1
 
-# or with Node
-npx serve .
-
-# or with Blender's bundled Python (no other tools needed)
-& "C:\Program Files\Blender Foundation\Blender 5.0\5.0\python\bin\python.exe" -m http.server 8000
+# Stuck/broken server on port 8000?
+.\stop-server.bat
 ```
 
 Then open http://localhost:8000

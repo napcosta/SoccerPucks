@@ -1,0 +1,4 @@
+Source: ambientCG Ice003
+URL: https://ambientcg.com/a/Ice003
+License: Creative Commons CC0 1.0 Universal
+Notes: Color-graded from the 1K JPG color map for a pale arena-ice look.

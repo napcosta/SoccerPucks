@@ -17,6 +17,11 @@ function defaults() {
       playerRestitution: BALL.playerRestitution,
       wallRestitution: BALL.wallRestitution,
     },
+    scoreboard: {
+      x: -12.6,
+      y: 1.05,
+      z: 0,
+    },
   };
 }
 
@@ -38,4 +43,7 @@ export const TUNING_SLIDERS = [
   { group: 'ball', key: 'mass', name: 'Mass', min: 0.5, max: 5, step: 0.1 },
   { group: 'ball', key: 'playerRestitution', name: 'Hero bounce', min: 0, max: 1, step: 0.05 },
   { group: 'ball', key: 'wallRestitution', name: 'Wall bounce', min: 0, max: 1, step: 0.05 },
+  { group: 'scoreboard', label: 'Scoreboard', key: 'x', name: 'X', min: -20, max: 20, step: 0.1 },
+  { group: 'scoreboard', key: 'y', name: 'Y', min: 0, max: 10, step: 0.05 },
+  { group: 'scoreboard', key: 'z', name: 'Z', min: -20, max: 20, step: 0.1 },
 ];

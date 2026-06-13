@@ -19,7 +19,7 @@ export async function loadAssets() {
     loadGLB('assets/sam.glb'),
     loadGLB('assets/tesla.glb'),
     loadGLB('assets/goal.glb'),
-    textureLoader.loadAsync('assets/textures/IceSmall.png'),
+    textureLoader.loadAsync('assets/textures/rink_ice_ambientcg_ice003.jpg'),
     textureLoader.loadAsync('assets/textures/smoke_puff.png'),
   ]);
 

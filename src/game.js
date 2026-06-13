@@ -21,11 +21,12 @@ import { TUNING } from './tuning.js';
 const SPAWN_Z = 7.8;
 
 export class Game {
-  constructor({ scene, camera, assets, hud, playerHero }) {
+  constructor({ scene, camera, assets, hud, scoreboard, playerHero }) {
     this.scene = scene;
     this.camera = camera;
     this.assets = assets;
     this.hud = hud;
+    this.scoreboard = scoreboard;
 
     this.state = 'kickoff';
     this.stateTimer = MATCH.kickoffDelay;
@@ -378,10 +379,12 @@ export class Game {
   }
 
   updateHud() {
-    this.hud.score.textContent = `${this.score[TEAM.RED]} — ${this.score[TEAM.BLUE]}`;
-    this.hud.timer.textContent = this.goldenGoal
-      ? 'GOLDEN GOAL'
-      : `${Math.ceil(this.timeLeft)}`;
+    this.scoreboard?.update(
+      this.score[TEAM.RED],
+      this.score[TEAM.BLUE],
+      this.timeLeft,
+      this.goldenGoal
+    );
     const human = this.players[0];
     this.hud.powerFill.style.width = `${human.hero.cooldownFraction * 100}%`;
   }
