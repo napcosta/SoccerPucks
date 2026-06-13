@@ -27,6 +27,22 @@ npx serve .
 
 Then open http://localhost:8000
 
+## Play online
+
+After pushing to GitHub, the game deploys automatically to GitHub Pages on every push to `main`.
+
+Live URL: `https://<your-github-username>.github.io/SoccerPucks/`
+
+First-time setup:
+
+```powershell
+gh auth login
+cd "c:\Users\nuno_\OneDrive\Desktop\SoccerPucks"
+gh repo create SoccerPucks --public --source=. --remote=origin --push --description "HaxBall-inspired 3D arcade ball game in the browser"
+```
+
+Then in the repo on GitHub: **Settings → Pages → Build and deployment → Source → GitHub Actions** (if it is not already selected). The included workflow publishes the site on the next push.
+
 ## Controls
 
 | Key | Action |
