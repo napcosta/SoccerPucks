@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+import { prepareSmokeTexture } from './effects.js';
 
 const loader = new GLTFLoader();
 const textureLoader = new THREE.TextureLoader();
@@ -12,13 +13,14 @@ function loadGLB(url) {
 }
 
 export async function loadAssets() {
-  const [stadium, ball, sam, tesla, goal, pitchTexture] = await Promise.all([
+  const [stadium, ball, sam, tesla, goal, pitchTexture, smokeTexture] = await Promise.all([
     loadGLB('assets/stadium.glb'),
     loadGLB('assets/ball.glb'),
     loadGLB('assets/sam.glb'),
     loadGLB('assets/tesla.glb'),
     loadGLB('assets/goal.glb'),
     textureLoader.loadAsync('assets/textures/IceSmall.png'),
+    textureLoader.loadAsync('assets/textures/smoke_puff.png'),
   ]);
 
   pitchTexture.colorSpace = THREE.SRGBColorSpace;
@@ -26,7 +28,15 @@ export async function loadAssets() {
   pitchTexture.wrapT = THREE.RepeatWrapping;
   pitchTexture.anisotropy = 8;
 
-  return { stadium, ball, sam, tesla, goal, pitchTexture };
+  return {
+    stadium,
+    ball,
+    sam,
+    tesla,
+    goal,
+    pitchTexture,
+    smokeTexture: prepareSmokeTexture(smokeTexture),
+  };
 }
 
 export function cloneHeroScene(gltf) {

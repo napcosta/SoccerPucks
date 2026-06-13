@@ -1,5 +1,6 @@
 import { HEROES, BALL } from './constants.js';
 import { isTouching } from './physics.js';
+import { DEBUG } from './debug.js';
 
 class HeroBase {
   constructor(player) {
@@ -8,10 +9,15 @@ class HeroBase {
   }
 
   get cooldownFraction() {
+    if (DEBUG.noCooldowns) return 1;
     return 1 - this.cooldownRemaining / this.def.powerCooldown;
   }
 
   tickCooldown(dt) {
+    if (DEBUG.noCooldowns) {
+      this.cooldownRemaining = 0;
+      return;
+    }
     if (this.cooldownRemaining > 0) {
       this.cooldownRemaining = Math.max(0, this.cooldownRemaining - dt);
     }
@@ -27,7 +33,7 @@ export class SamHero extends HeroBase {
   update(dt, commands, ball) {
     this.tickCooldown(dt);
     const moving = commands.moveX !== 0 || commands.moveZ !== 0;
-    if (commands.power && this.cooldownRemaining <= 0 && moving) {
+    if (commands.powerPressed && this.cooldownRemaining <= 0 && moving) {
       const body = this.player.body;
       body.vx *= this.def.dashMultiplier;
       body.vz *= this.def.dashMultiplier;
@@ -44,16 +50,12 @@ export class TeslaHero extends HeroBase {
     this.active = false;
     this.holdRemaining = 0;
     this.captured = false;
-    this.lastPower = false;
   }
 
   update(dt, commands, ball) {
     this.tickCooldown(dt);
 
-    const pressedEdge = commands.power && !this.lastPower;
-    this.lastPower = commands.power;
-
-    if (pressedEdge) {
+    if (commands.powerPressed) {
       if (!this.active && this.cooldownRemaining <= 0) {
         this.active = true;
         this.captured = false;

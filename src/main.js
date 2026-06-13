@@ -1,6 +1,9 @@
 import { loadAssets } from './assets.js';
 import { createRenderer, createCamera, buildWorld } from './scene.js';
 import { Game } from './game.js';
+import { initDebugPanel } from './debug.js';
+
+initDebugPanel();
 
 const canvas = document.getElementById('game-canvas');
 const menu = document.getElementById('menu');

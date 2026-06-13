@@ -13,6 +13,8 @@ import { readCommands } from './input.js';
 import { computeAICommands } from './ai.js';
 import { createHero } from './heroes.js';
 import { cloneHeroScene, tintHero } from './assets.js';
+import { spawnDashSmoke } from './effects.js';
+import { DEBUG } from './debug.js';
 
 const SPAWN_Z = 7.8;
 
@@ -98,6 +100,7 @@ export class Game {
       facingX: 0,
       facingZ: -Math.sign(spawnZ),
       shootHeld: false,
+      powerHeld: false,
     };
     player.onPowerFX = (type) => this.spawnPowerFX(player, type);
     player.hero = createHero(heroKind, player);
@@ -141,6 +144,7 @@ export class Game {
 
   update(dt) {
     dt = Math.min(dt, 1 / 30);
+    if (DEBUG.slowMotion) dt *= 0.25;
 
     this.stateTimer -= dt;
 
@@ -158,7 +162,7 @@ export class Game {
     }
 
     if (this.state === 'playing') {
-      this.timeLeft -= dt;
+      if (!DEBUG.freezeTimer) this.timeLeft -= dt;
       if (this.timeLeft <= 0) {
         this.timeLeft = 0;
         if (this.score[TEAM.RED] === this.score[TEAM.BLUE] && !this.goldenGoal) {
@@ -185,7 +189,9 @@ export class Game {
     for (const p of this.players) {
       const raw = p.isHuman
         ? this.screenToWorld(readCommands())
-        : computeAICommands(p, ballBody, Math.sign(p.spawnZ));
+        : DEBUG.disableAI
+          ? { moveX: 0, moveZ: 0, shoot: false, power: false }
+          : computeAICommands(p, ballBody, Math.sign(p.spawnZ));
 
       const body = p.body;
       body.vx += raw.moveX * PLAYER.accel * dt;
@@ -199,7 +205,10 @@ export class Game {
 
       updateFacingTowardBall(p, ballBody);
 
-      p.hero.update(dt, raw, ballBody);
+      const powerPressed = raw.power && !p.powerHeld;
+      p.powerHeld = raw.power;
+
+      p.hero.update(dt, { ...raw, powerPressed }, ballBody);
 
       const shootPressed = raw.shoot && !p.shootHeld;
       p.shootHeld = raw.shoot;
@@ -296,9 +305,31 @@ export class Game {
   }
 
   spawnPowerFX(player, type) {
+    if (type === 'magnet_off') return;
+
+    if (type === 'dash') {
+      const speed = Math.hypot(player.body.vx, player.body.vz);
+      let dirX = player.facingX;
+      let dirZ = player.facingZ;
+      if (speed > 0.1) {
+        dirX = player.body.vx / speed;
+        dirZ = player.body.vz / speed;
+      }
+      this.effects.push(
+        spawnDashSmoke(
+          this.scene,
+          this.assets.smokeTexture,
+          player.body.x,
+          player.body.z,
+          dirX,
+          dirZ
+        )
+      );
+      return;
+    }
+
     const color =
       type === 'shoot' ? 0xffffff : type.startsWith('magnet') ? 0x6ea8ff : 0xffd84a;
-    if (type === 'magnet_off') return;
 
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.4, 0.55, 32),
@@ -313,6 +344,14 @@ export class Game {
   updateEffects(dt) {
     for (let i = this.effects.length - 1; i >= 0; i--) {
       const fx = this.effects[i];
+      if (fx.update) {
+        if (!fx.update(dt)) {
+          fx.dispose(this.scene);
+          this.effects.splice(i, 1);
+        }
+        continue;
+      }
+
       fx.life -= dt;
       const k = 1 - fx.life / fx.maxLife;
       fx.mesh.scale.setScalar(1 + k * 3.5);
@@ -351,7 +390,10 @@ export class Game {
     clearTimeout(this.bannerTimeout);
     for (const p of this.players) this.scene.remove(p.mesh);
     this.scene.remove(this.ball.mesh);
-    for (const fx of this.effects) this.scene.remove(fx.mesh);
+    for (const fx of this.effects) {
+      if (fx.dispose) fx.dispose(this.scene);
+      else this.scene.remove(fx.mesh);
+    }
     this.effects.length = 0;
   }
 }
