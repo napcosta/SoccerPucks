@@ -17,18 +17,20 @@ export const GOAL = {
 
 export const PLAYER = {
   radius: 0.55,
-  accel: 38,
-  maxSpeed: 7.5,
-  damping: 6.5,
+  mass: 6,
+  accel: 11,
+  maxSpeed: 6,
+  damping: 1.9,
   shootVelocity: 9,
   shootRange: 0.35,
 };
 
 export const BALL = {
   radius: 0.45,
+  mass: 1.2,
   damping: 0.55,
-  wallRestitution: 0.82,
-  playerRestitution: 0.9,
+  wallRestitution: 0.8,
+  playerRestitution: 0.35,
   maxSpeed: 18,
 };
 

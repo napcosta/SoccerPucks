@@ -1,7 +1,7 @@
 import { loadAssets } from './assets.js';
 import { createRenderer, createCamera, buildWorld } from './scene.js';
 import { Game } from './game.js';
-import { initDebugPanel } from './debug.js';
+import { initDebugPanel, updatePhysicsOverlay } from './debug.js';
 
 initDebugPanel();
 
@@ -75,6 +75,7 @@ function frame(now) {
   lastTime = now;
 
   if (game) game.update(dt);
+  updatePhysicsOverlay(game, dt);
   if (scene) renderer.render(scene, camera);
 
   requestAnimationFrame(frame);

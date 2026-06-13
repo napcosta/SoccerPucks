@@ -220,7 +220,10 @@ html, body {
   flex-direction: column;
   gap: 8px;
   padding: 14px 16px;
-  min-width: 180px;
+  min-width: 280px;
+  max-width: min(320px, calc(100vw - 28px));
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
   background: rgba(10, 13, 24, 0.86);
   border: 1px solid rgba(110, 168, 255, 0.35);
   border-radius: 10px;
@@ -256,4 +259,92 @@ html, body {
   margin-top: 4px;
   font-size: 11px;
   color: #7e8aa6;
+}
+
+#debug-tuning {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(110, 168, 255, 0.2);
+}
+
+.debug-section-title {
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: #6ea8ff;
+}
+
+.debug-group-label {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #aab4cc;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.debug-slider-row {
+  display: grid;
+  grid-template-columns: 88px 1fr 42px;
+  align-items: center;
+  gap: 8px;
+  cursor: default;
+}
+
+.debug-slider-name {
+  font-size: 11px;
+  color: #dfe6f5;
+}
+
+.debug-slider-row input[type='range'] {
+  width: 100%;
+  accent-color: #6ea8ff;
+  cursor: pointer;
+}
+
+.debug-slider-value {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+  color: #9eb6e8;
+  text-align: right;
+}
+
+#debug-reset-tuning {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(110, 168, 255, 0.35);
+  border-radius: 6px;
+  background: rgba(110, 168, 255, 0.12);
+  color: #dfe6f5;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#debug-reset-tuning:hover {
+  background: rgba(110, 168, 255, 0.22);
+}
+
+#physics-overlay {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 30;
+  max-width: min(420px, calc(100vw - 28px));
+  margin: 0;
+  padding: 12px 14px;
+  background: rgba(10, 13, 24, 0.86);
+  border: 1px solid rgba(110, 168, 255, 0.35);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #dfe6f5;
+  white-space: pre-wrap;
+  user-select: text;
+  pointer-events: none;
 }

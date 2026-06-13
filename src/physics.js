@@ -1,7 +1,13 @@
 import { PITCH, PLAYER, BALL, GOAL } from './constants.js';
 
-export function createBody(x, z, radius) {
-  return { x, z, vx: 0, vz: 0, radius };
+export function createBody(x, z, radius, mass = 1) {
+  return { x, z, vx: 0, vz: 0, radius, mass };
+}
+
+function massShare(a, b) {
+  const invA = 1 / a.mass;
+  const invB = 1 / b.mass;
+  return invA / (invA + invB);
 }
 
 export function integrate(body, dt, damping) {
@@ -98,7 +104,7 @@ export function collideGoalPosts(body, restitution) {
   }
 }
 
-export function collideCircles(a, b, restitution, massRatioA = 0.5) {
+export function collideCircles(a, b, restitution, massRatioA = massShare(a, b)) {
   const dx = b.x - a.x;
   const dz = b.z - a.z;
   const dist = Math.hypot(dx, dz);

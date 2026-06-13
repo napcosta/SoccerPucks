@@ -32,9 +32,11 @@ export class SamHero extends HeroBase {
 
   update(dt, commands, ball) {
     this.tickCooldown(dt);
+    const body = this.player.body;
+    const speed = Math.hypot(body.vx, body.vz);
     const moving = commands.moveX !== 0 || commands.moveZ !== 0;
-    if (commands.powerPressed && this.cooldownRemaining <= 0 && moving) {
-      const body = this.player.body;
+    const canDash = moving || speed > 0.5;
+    if (commands.powerPressed && this.cooldownRemaining <= 0 && canDash) {
       body.vx *= this.def.dashMultiplier;
       body.vz *= this.def.dashMultiplier;
       this.cooldownRemaining = this.def.powerCooldown;

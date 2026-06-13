@@ -16,6 +16,7 @@ import { createHero } from './heroes.js';
 import { cloneHeroScene, tintHero, footLift } from './assets.js';
 import { spawnDashSmoke } from './effects.js';
 import { DEBUG } from './debug.js';
+import { TUNING } from './tuning.js';
 
 const SPAWN_Z = 7.8;
 
@@ -32,6 +33,9 @@ export class Game {
     this.score = { [TEAM.RED]: 0, [TEAM.BLUE]: 0 };
     this.goldenGoal = false;
     this.onMatchEnd = null;
+
+    this.pitchGoalHalfWidth = PITCH.goalHalfWidth;
+    this.pitchGoalDepth = PITCH.goalDepth;
 
     this.effects = [];
 
@@ -66,7 +70,7 @@ export class Game {
     }
 
     return {
-      body: createBody(0, 0, BALL.radius),
+      body: createBody(0, 0, BALL.radius, BALL.mass),
       mesh,
       mixer,
       heading: 0,
@@ -96,7 +100,7 @@ export class Game {
       team,
       isHuman,
       spawnZ,
-      body: createBody(0, spawnZ, PLAYER.radius),
+      body: createBody(0, spawnZ, PLAYER.radius, PLAYER.mass),
       mesh,
       mixer,
       actions,
@@ -190,8 +194,13 @@ export class Game {
 
   simulate(dt) {
     const ballBody = this.ball.body;
+    const player = TUNING.player;
+    const ball = TUNING.ball;
 
+    ballBody.mass = ball.mass;
     for (const p of this.players) {
+      p.body.mass = player.mass;
+
       const raw = p.isHuman
         ? this.screenToWorld(readCommands())
         : DEBUG.disableAI
@@ -199,45 +208,41 @@ export class Game {
           : computeAICommands(p, ballBody, Math.sign(p.spawnZ));
 
       const body = p.body;
-      body.vx += raw.moveX * PLAYER.accel * dt;
-      body.vz += raw.moveZ * PLAYER.accel * dt;
-      const justDashed =
-        p.heroKind === 'sam' &&
-        p.hero.cooldownRemaining > p.hero.def.powerCooldown - 0.6;
-      clampSpeed(body, PLAYER.maxSpeed * (justDashed ? 1.9 : 1));
-      integrate(body, dt, PLAYER.damping);
+      body.vx += raw.moveX * player.accel * dt;
+      body.vz += raw.moveZ * player.accel * dt;
+
+      const powerPressed = raw.power && !p.powerHeld;
+      p.powerHeld = raw.power;
+      p.hero.update(dt, { ...raw, powerPressed }, ballBody);
+
+      integrate(body, dt, player.damping);
       collideWalls(body, 0.2);
       collideGoalPosts(body, 0.2);
 
       updateFacingTowardBall(p, ballBody);
 
-      const powerPressed = raw.power && !p.powerHeld;
-      p.powerHeld = raw.power;
-
-      p.hero.update(dt, { ...raw, powerPressed }, ballBody);
-
       const shootPressed = raw.shoot && !p.shootHeld;
       p.shootHeld = raw.shoot;
-      if (shootPressed && isTouching(body, ballBody, PLAYER.shootRange)) {
+      if (shootPressed && isTouching(body, ballBody, player.shootRange)) {
         const dx = ballBody.x - body.x;
         const dz = ballBody.z - body.z;
         const len = Math.hypot(dx, dz) || 1;
-        ballBody.vx += (dx / len) * PLAYER.shootVelocity;
-        ballBody.vz += (dz / len) * PLAYER.shootVelocity;
+        ballBody.vx += (dx / len) * player.shootVelocity;
+        ballBody.vz += (dz / len) * player.shootVelocity;
         if (p.hero.captured) p.hero.release(ballBody);
         this.spawnPowerFX(p, 'shoot');
       }
     }
 
-    integrate(ballBody, dt, BALL.damping);
-    clampSpeed(ballBody, BALL.maxSpeed);
-    collideWalls(ballBody, BALL.wallRestitution);
-    collideGoalPosts(ballBody, BALL.wallRestitution);
+    integrate(ballBody, dt, ball.damping);
+    clampSpeed(ballBody, ball.maxSpeed);
+    collideWalls(ballBody, ball.wallRestitution);
+    collideGoalPosts(ballBody, ball.wallRestitution);
 
     for (const p of this.players) {
-      collideCircles(p.body, ballBody, BALL.playerRestitution, 0.15);
+      collideCircles(p.body, ballBody, ball.playerRestitution);
     }
-    collideCircles(this.players[0].body, this.players[1].body, 0.3, 0.5);
+    collideCircles(this.players[0].body, this.players[1].body, 0.3);
 
     const scorer = goalScored(ballBody);
     if (scorer !== 0) this.handleGoal(scorer);
