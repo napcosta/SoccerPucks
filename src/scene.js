@@ -48,7 +48,7 @@ export function buildWorld(assets) {
   scene.add(fill);
 
   const groundMat = new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 1 });
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(220, 220), groundMat);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(52, 42), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.06;
   ground.receiveShadow = true;
