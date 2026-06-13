@@ -189,6 +189,7 @@ export function createScoreboard() {
     new THREE.PlaneGeometry(BOARD_W, BOARD_H),
     new THREE.MeshBasicMaterial({ map: texture, toneMapped: false })
   );
+  face.position.z = 0.02;
   group.add(face);
 
   group.position.set(TUNING.scoreboard.x, TUNING.scoreboard.y, TUNING.scoreboard.z);

@@ -26,8 +26,9 @@ export function createCamera() {
 
 export function buildWorld(assets) {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0d18);
-  scene.fog = new THREE.Fog(0x0a0d18, 60, 140);
+  scene.background = new THREE.Color(0x89b4df);
+  scene.fog = new THREE.Fog(0x8fb8df, 80, 180);
+  addSkybox(scene);
 
   const hemi = new THREE.HemisphereLight(0xcfe4ff, 0x32281e, 1.0);
   scene.add(hemi);
@@ -86,6 +87,78 @@ export function buildWorld(assets) {
   scene.add(scoreboard.group);
 
   return { scene, scoreboard };
+}
+
+function addSkybox(scene) {
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(170, 48, 24),
+    new THREE.MeshBasicMaterial({
+      map: createSkyboxTexture(),
+      side: THREE.BackSide,
+      fog: false,
+      depthWrite: false,
+    })
+  );
+  sky.frustumCulled = false;
+  sky.renderOrder = -100;
+  scene.add(sky);
+}
+
+function createSkyboxTexture() {
+  const width = 2048;
+  const height = 1024;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+
+  const sky = ctx.createLinearGradient(0, 0, 0, height);
+  sky.addColorStop(0, '#5f89bd');
+  sky.addColorStop(0.42, '#89b4df');
+  sky.addColorStop(0.68, '#c6dced');
+  sky.addColorStop(1, '#eef5fb');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, width, height);
+
+  const haze = ctx.createLinearGradient(0, height * 0.45, 0, height);
+  haze.addColorStop(0, 'rgba(255, 255, 255, 0)');
+  haze.addColorStop(1, 'rgba(255, 255, 255, 0.48)');
+  ctx.fillStyle = haze;
+  ctx.fillRect(0, height * 0.45, width, height * 0.55);
+
+  drawCloudBand(ctx, width, height, 0.25, 24, 0.28, 123);
+  drawCloudBand(ctx, width, height, 0.38, 18, 0.18, 241);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function drawCloudBand(ctx, width, height, yFraction, count, opacity, seed) {
+  let value = seed;
+  const rand = () => {
+    value = (value * 1664525 + 1013904223) >>> 0;
+    return value / 0xffffffff;
+  };
+
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  for (let i = 0; i < count; i++) {
+    const x = rand() * width;
+    const y = height * (yFraction + (rand() - 0.5) * 0.16);
+    const w = width * (0.04 + rand() * 0.08);
+    const h = height * (0.018 + rand() * 0.036);
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, w);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+    gradient.addColorStop(0.55, 'rgba(255, 255, 255, 0.42)');
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.ellipse(x, y, w, h, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function addMarkings(scene) {
