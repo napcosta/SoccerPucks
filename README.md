@@ -50,10 +50,11 @@ Pushes to `main` deploy automatically via GitHub Actions.
 ## Asset pipeline
 
 Models are exported from the Unity project's `.blend` files with
-`tools/export_glb.py` (run via Blender CLI):
+`tools/export_glb.py` (run via Blender CLI). Pass the `apply` flag so modifiers
+(e.g. Mirror) are baked — otherwise mirrored meshes export as only half:
 
 ```powershell
-& "<blender.exe>" -b "<source.blend>" --python "tools\export_glb.py" -- "<output.glb>"
+& "<blender.exe>" -b "<source.blend>" --python "tools\export_glb.py" -- "<output.glb>" apply
 ```
 
 | GLB | Source |
