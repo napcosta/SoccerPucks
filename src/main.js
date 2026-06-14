@@ -267,6 +267,8 @@ async function startOnlineGame(role, players) {
 function enterGameView() {
   menu.classList.add('hidden');
   hudRoot.classList.remove('hidden');
+  document.activeElement?.blur?.();
+  canvas.focus?.();
 }
 
 function returnToMenu() {

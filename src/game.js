@@ -214,6 +214,8 @@ export class Game {
         }
         this.simulate(dt);
       }
+    } else if (this.state === 'playing') {
+      this.predictLocalPlayer(dt);
     }
 
     for (const p of this.players) p.mixer.update(dt);
@@ -239,6 +241,21 @@ export class Game {
 
     if (DEBUG.disableAI) return { moveX: 0, moveZ: 0, shoot: false, power: false };
     return computeAICommands(p, ballBody, Math.sign(p.spawnZ));
+  }
+
+  predictLocalPlayer(dt) {
+    const p = this.players[this.localPlayerIndex];
+    if (!p || p.control !== 'local') return;
+
+    const player = TUNING.player;
+    const raw = this.screenToWorld(readCommands());
+    const body = p.body;
+
+    body.vx += raw.moveX * player.accel * dt;
+    body.vz += raw.moveZ * player.accel * dt;
+    integrate(body, dt, player.damping);
+    collideWalls(body, 0.2);
+    collideGoalPosts(body, 0.2);
   }
 
   simulate(dt) {

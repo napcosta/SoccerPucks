@@ -128,7 +128,6 @@ class LobbySession {
     const connection = this.peer.connect(roomPeerId(this.roomCode), {
       label: CHANNEL_NAME,
       metadata: { role: 'guest' },
-      reliable: false,
       serialization: 'json',
     });
     this.attachConnection(connection);
