@@ -15,8 +15,8 @@ The game must be served over HTTP (GLB/texture loading doesn't work from `file:/
 Any static server works, from this folder:
 
 ```powershell
-# PowerShell (no install needed) — double-click serve.bat
-.\serve.ps1
+# PowerShell (no install needed)
+.\serve.ps1 -Port 8000
 
 # Stuck/broken server on port 8000?
 .\stop-server.bat
