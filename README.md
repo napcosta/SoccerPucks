@@ -1,18 +1,20 @@
 # Soccer Pucks
 
 HaxBall-inspired 3D arcade ball game in the browser, built without Unity.
-Uses the original project's assets (stadium, heroes, ball) exported from the `.blend` sources to glTF.
+Uses the original project's assets (stadium, heroes, ball) exported from the `.blend`
+sources to glTF.
 
 ## Stack
 
-- [Three.js](https://threejs.org/) (loaded from CDN via import maps — no build step, no npm)
+- [Three.js](https://threejs.org/) loaded from CDN via import maps, with no build step
+- Browser WebRTC data channels with PeerJS signaling for peer-to-peer online play
 - Custom planar physics (circles + walls, HaxBall-style)
 - Plain ES modules
 
 ## Run
 
-The game must be served over HTTP (GLB/texture loading doesn't work from `file://`).
-Any static server works, from this folder:
+The game must be served over HTTP because GLB and texture loading does not work from
+`file://`. Any static server works from this folder:
 
 ```powershell
 # PowerShell (no install needed)
@@ -30,6 +32,18 @@ Then open http://localhost:8000
 
 Pushes to `main` deploy automatically via GitHub Actions.
 
+## Online multiplayer
+
+The online mode is peer-to-peer with a short lobby code:
+
+- Host Online creates a six-character room code.
+- The other player chooses Join Online and enters that room code.
+- The match starts when the peer-to-peer data channel opens.
+
+The host simulates the match authoritatively. The guest sends inputs and receives
+state snapshots over WebRTC. PeerJS handles only the lightweight signaling needed
+to find the room; gameplay data still flows peer-to-peer.
+
 ## Controls
 
 | Key | Action |
@@ -40,15 +54,16 @@ Pushes to `main` deploy automatically via GitHub Actions.
 
 ## Gameplay
 
-- Local 1v1 vs AI: first pick a hero (Sam or Tesla)
+- Local 1v1 vs AI, or online 1v1 peer-to-peer
+- First pick a hero (Sam or Tesla)
 - 100 second matches, golden goal on a draw
-- Red defends the left goal, blue the right
+- Red defends the left goal, blue defends the right
 
 ## Asset pipeline
 
 Models are exported from the Unity project's `.blend` files with
 `tools/export_glb.py` (run via Blender CLI). Pass the `apply` flag so modifiers
-(e.g. Mirror) are baked — otherwise mirrored meshes export as only half:
+(for example Mirror) are baked. Otherwise mirrored meshes export as only half:
 
 ```powershell
 & "<blender.exe>" -b "<source.blend>" --python "tools\export_glb.py" -- "<output.glb>" apply

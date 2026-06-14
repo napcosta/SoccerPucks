@@ -19,14 +19,29 @@ import { DEBUG } from './debug.js';
 import { TUNING } from './tuning.js';
 
 const SPAWN_Z = 7.8;
+const EMPTY_SCREEN_COMMANDS = Object.freeze({ moveX: 0, moveZ: 0, shoot: false, power: false });
 
 export class Game {
-  constructor({ scene, camera, assets, hud, scoreboard, playerHero }) {
+  constructor({
+    scene,
+    camera,
+    assets,
+    hud,
+    scoreboard,
+    playerHero,
+    playerSpecs,
+    localPlayerIndex = 0,
+    authoritative = true,
+    inputProvider = null,
+  }) {
     this.scene = scene;
     this.camera = camera;
     this.assets = assets;
     this.hud = hud;
     this.scoreboard = scoreboard;
+    this.localPlayerIndex = localPlayerIndex;
+    this.authoritative = authoritative;
+    this.inputProvider = inputProvider;
 
     this.state = 'kickoff';
     this.stateTimer = MATCH.kickoffDelay;
@@ -39,17 +54,29 @@ export class Game {
     this.pitchGoalDepth = PITCH.goalDepth;
 
     this.effects = [];
+    this.activeBanner = { visible: false, text: '', color: '#ffffff' };
+    this.lastSnapshotSeq = 0;
+    this.onFxEvent = null;
 
     this.ball = this.createBall();
-    const aiHero = playerHero === 'sam' ? 'tesla' : 'sam';
-    this.players = [
-      this.createPlayer(playerHero, TEAM.RED, SPAWN_Z, true),
-      this.createPlayer(aiHero, TEAM.BLUE, -SPAWN_Z, false),
-    ];
+    const specs =
+      playerSpecs ??
+      [
+        { heroKind: playerHero, team: TEAM.RED, spawnZ: SPAWN_Z, control: 'local' },
+        {
+          heroKind: playerHero === 'sam' ? 'tesla' : 'sam',
+          team: TEAM.BLUE,
+          spawnZ: -SPAWN_Z,
+          control: 'ai',
+        },
+      ];
+    this.players = specs.map((spec) =>
+      this.createPlayer(spec.heroKind, spec.team, spec.spawnZ, spec.control)
+    );
 
     this.resetPositions();
     this.updateHud();
-    this.showBanner('KICK OFF', MATCH.kickoffDelay * 0.8);
+    if (this.authoritative) this.showBanner('KICK OFF', MATCH.kickoffDelay * 0.8);
   }
 
   createBall() {
@@ -79,7 +106,7 @@ export class Game {
     };
   }
 
-  createPlayer(heroKind, team, spawnZ, isHuman) {
+  createPlayer(heroKind, team, spawnZ, control = 'ai') {
     const gltfSource = heroKind === 'tesla' ? this.assets.tesla : this.assets.sam;
     const mesh = cloneHeroScene(gltfSource);
     const meshScale = (PLAYER.radius * 2) / 2.96;
@@ -99,7 +126,9 @@ export class Game {
     const player = {
       heroKind,
       team,
-      isHuman,
+      control,
+      isHuman: control === 'local',
+      isRemote: control === 'remote',
       spawnZ,
       body: createBody(0, spawnZ, PLAYER.radius, PLAYER.mass),
       mesh,
@@ -156,33 +185,35 @@ export class Game {
     dt = Math.min(dt, 1 / 30);
     if (DEBUG.slowMotion) dt *= 0.25;
 
-    this.stateTimer -= dt;
+    if (this.authoritative) {
+      this.stateTimer -= dt;
 
-    if (this.state === 'kickoff' && this.stateTimer <= 0) {
-      this.state = 'playing';
-      this.hideBanner();
-    } else if (this.state === 'goal' && this.stateTimer <= 0) {
-      this.resetPositions();
-      this.state = 'kickoff';
-      this.stateTimer = MATCH.kickoffDelay;
-      this.showBanner('KICK OFF', MATCH.kickoffDelay * 0.8);
-    } else if (this.state === 'over' && this.stateTimer <= 0) {
-      this.onMatchEnd?.();
-      return;
-    }
-
-    if (this.state === 'playing') {
-      if (!DEBUG.freezeTimer) this.timeLeft -= dt;
-      if (this.timeLeft <= 0) {
-        this.timeLeft = 0;
-        if (this.score[TEAM.RED] === this.score[TEAM.BLUE] && !this.goldenGoal) {
-          this.goldenGoal = true;
-          this.showBanner('GOLDEN GOAL', 2);
-        } else if (!this.goldenGoal) {
-          this.endMatch();
-        }
+      if (this.state === 'kickoff' && this.stateTimer <= 0) {
+        this.state = 'playing';
+        this.hideBanner();
+      } else if (this.state === 'goal' && this.stateTimer <= 0) {
+        this.resetPositions();
+        this.state = 'kickoff';
+        this.stateTimer = MATCH.kickoffDelay;
+        this.showBanner('KICK OFF', MATCH.kickoffDelay * 0.8);
+      } else if (this.state === 'over' && this.stateTimer <= 0) {
+        this.onMatchEnd?.();
+        return;
       }
-      this.simulate(dt);
+
+      if (this.state === 'playing') {
+        if (!DEBUG.freezeTimer) this.timeLeft -= dt;
+        if (this.timeLeft <= 0) {
+          this.timeLeft = 0;
+          if (this.score[TEAM.RED] === this.score[TEAM.BLUE] && !this.goldenGoal) {
+            this.goldenGoal = true;
+            this.showBanner('GOLDEN GOAL', 2);
+          } else if (!this.goldenGoal) {
+            this.endMatch();
+          }
+        }
+        this.simulate(dt);
+      }
     }
 
     for (const p of this.players) p.mixer.update(dt);
@@ -193,20 +224,34 @@ export class Game {
     this.updateHud();
   }
 
+  commandsForPlayer(p, index, ballBody) {
+    if (p.control === 'local') return this.screenToWorld(readCommands());
+
+    if (p.control === 'remote') {
+      const commands = this.inputProvider?.(p, index) ?? EMPTY_SCREEN_COMMANDS;
+      return this.screenToWorld({
+        moveX: commands.moveX || 0,
+        moveZ: commands.moveZ || 0,
+        shoot: Boolean(commands.shoot),
+        power: Boolean(commands.power),
+      });
+    }
+
+    if (DEBUG.disableAI) return { moveX: 0, moveZ: 0, shoot: false, power: false };
+    return computeAICommands(p, ballBody, Math.sign(p.spawnZ));
+  }
+
   simulate(dt) {
     const ballBody = this.ball.body;
     const player = TUNING.player;
     const ball = TUNING.ball;
 
     ballBody.mass = ball.mass;
-    for (const p of this.players) {
+    for (let i = 0; i < this.players.length; i++) {
+      const p = this.players[i];
       p.body.mass = player.mass;
 
-      const raw = p.isHuman
-        ? this.screenToWorld(readCommands())
-        : DEBUG.disableAI
-          ? { moveX: 0, moveZ: 0, shoot: false, power: false }
-          : computeAICommands(p, ballBody, Math.sign(p.spawnZ));
+      const raw = this.commandsForPlayer(p, i, ballBody);
 
       const body = p.body;
       body.vx += raw.moveX * player.accel * dt;
@@ -317,8 +362,9 @@ export class Game {
     this.camera.lookAt(bx * 0.25, 0, bz * 0.45);
   }
 
-  spawnPowerFX(player, type) {
+  spawnPowerFX(player, type, fromNetwork = false) {
     if (type === 'magnet_off') return;
+    if (!fromNetwork) this.onFxEvent?.(this.players.indexOf(player), type);
 
     if (type === 'dash') {
       const speed = Math.hypot(player.body.vx, player.body.vz);
@@ -385,20 +431,82 @@ export class Game {
       this.timeLeft,
       this.goldenGoal
     );
-    const human = this.players[0];
-    this.hud.powerFill.style.width = `${human.hero.cooldownFraction * 100}%`;
+    const local = this.players[this.localPlayerIndex] ?? this.players[0];
+    this.hud.powerFill.style.width = `${local.hero.cooldownFraction * 100}%`;
   }
 
   showBanner(text, duration, color = '#ffffff') {
-    this.hud.banner.textContent = text;
-    this.hud.banner.style.color = color;
-    this.hud.banner.classList.remove('hidden');
+    this.setBannerState({ visible: true, text, color });
     clearTimeout(this.bannerTimeout);
     this.bannerTimeout = setTimeout(() => this.hideBanner(), duration * 1000);
   }
 
   hideBanner() {
-    this.hud.banner.classList.add('hidden');
+    this.setBannerState({ visible: false, text: this.activeBanner.text, color: this.activeBanner.color });
+  }
+
+  setBannerState({ visible, text = '', color = '#ffffff' }) {
+    this.activeBanner = { visible: Boolean(visible), text, color };
+    this.hud.banner.textContent = text;
+    this.hud.banner.style.color = color;
+    this.hud.banner.classList.toggle('hidden', !visible);
+  }
+
+  serializeSnapshot(seq) {
+    return {
+      type: 'snapshot',
+      seq,
+      state: this.state,
+      stateTimer: this.stateTimer,
+      timeLeft: this.timeLeft,
+      score: { red: this.score[TEAM.RED], blue: this.score[TEAM.BLUE] },
+      goldenGoal: this.goldenGoal,
+      banner: this.activeBanner,
+      ball: {
+        body: serializeBody(this.ball.body),
+        heading: this.ball.heading,
+      },
+      players: this.players.map((p) => ({
+        body: serializeBody(p.body),
+        facingX: p.facingX,
+        facingZ: p.facingZ,
+        currentAction: p.currentAction,
+        shootHeld: p.shootHeld,
+        powerHeld: p.powerHeld,
+        hero: serializeHero(p.hero),
+      })),
+    };
+  }
+
+  applySnapshot(snapshot) {
+    if (snapshot.seq && snapshot.seq <= this.lastSnapshotSeq) return;
+    this.lastSnapshotSeq = snapshot.seq || this.lastSnapshotSeq;
+
+    this.state = snapshot.state;
+    this.stateTimer = snapshot.stateTimer;
+    this.timeLeft = snapshot.timeLeft;
+    this.score[TEAM.RED] = snapshot.score.red;
+    this.score[TEAM.BLUE] = snapshot.score.blue;
+    this.goldenGoal = snapshot.goldenGoal;
+
+    applyBody(this.ball.body, snapshot.ball.body);
+    this.ball.heading = snapshot.ball.heading;
+
+    for (let i = 0; i < this.players.length; i++) {
+      const p = this.players[i];
+      const sp = snapshot.players[i];
+      if (!sp) continue;
+      applyBody(p.body, sp.body);
+      p.facingX = sp.facingX;
+      p.facingZ = sp.facingZ;
+      p.shootHeld = sp.shootHeld;
+      p.powerHeld = sp.powerHeld;
+      applyHero(p.hero, sp.hero);
+      this.playAction(p, sp.currentAction);
+    }
+
+    this.setBannerState(snapshot.banner);
+    this.updateHud();
   }
 
   dispose() {
@@ -411,6 +519,34 @@ export class Game {
     }
     this.effects.length = 0;
   }
+}
+
+function serializeBody(body) {
+  return { x: body.x, z: body.z, vx: body.vx, vz: body.vz };
+}
+
+function applyBody(body, snapshot) {
+  body.x = snapshot.x;
+  body.z = snapshot.z;
+  body.vx = snapshot.vx;
+  body.vz = snapshot.vz;
+}
+
+function serializeHero(hero) {
+  return {
+    cooldownRemaining: hero.cooldownRemaining,
+    active: hero.active ?? false,
+    holdRemaining: hero.holdRemaining ?? 0,
+    captured: hero.captured ?? false,
+  };
+}
+
+function applyHero(hero, snapshot) {
+  if (!snapshot) return;
+  hero.cooldownRemaining = snapshot.cooldownRemaining;
+  if ('active' in hero) hero.active = snapshot.active;
+  if ('holdRemaining' in hero) hero.holdRemaining = snapshot.holdRemaining;
+  if ('captured' in hero) hero.captured = snapshot.captured;
 }
 
 function dampAngle(current, target, lambda, dt) {

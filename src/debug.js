@@ -175,10 +175,11 @@ export function updatePhysicsOverlay(game, frameDt) {
   overlay.classList.remove('hidden');
 
   const ball = game.ball.body;
-  const human = game.players.find((p) => p.isHuman) ?? game.players[0];
-  const ai = game.players.find((p) => !p.isHuman) ?? game.players[1];
-  const humanBallDist = Math.hypot(ball.x - human.body.x, ball.z - human.body.z);
-  const touchingBall = humanBallDist <= human.body.radius + ball.radius;
+  const localIndex = game.localPlayerIndex ?? 0;
+  const local = game.players[localIndex] ?? game.players[0];
+  const other = game.players.find((_, index) => index !== localIndex) ?? game.players[1];
+  const localBallDist = Math.hypot(ball.x - local.body.x, ball.z - local.body.z);
+  const touchingBall = localBallDist <= local.body.radius + ball.radius;
   const inGoalMouth = Math.abs(ball.x) < game.pitchGoalHalfWidth;
   const t = TUNING;
 
@@ -189,11 +190,11 @@ export function updatePhysicsOverlay(game, frameDt) {
     formatBody('ball', ball),
     `         in goal mouth ${inGoalMouth ? 'yes' : 'no'}`,
     '',
-    formatBody(`${human.heroKind} (you)`, human.body),
-    `         facing (${fmt(human.facingX, 2)}, ${fmt(human.facingZ, 2)})  power ${fmt(human.hero.cooldownFraction * 100, 0)}%`,
-    `         ball dist ${fmt(humanBallDist, 2)}  touch ${touchingBall ? 'yes' : 'no'}`,
+    formatBody(`${local.heroKind} (you)`, local.body),
+    `         facing (${fmt(local.facingX, 2)}, ${fmt(local.facingZ, 2)})  power ${fmt(local.hero.cooldownFraction * 100, 0)}%`,
+    `         ball dist ${fmt(localBallDist, 2)}  touch ${touchingBall ? 'yes' : 'no'}`,
     '',
-    formatBody(`${ai.heroKind} (ai)`, ai.body),
+    formatBody(`${other.heroKind} (${other.control})`, other.body),
     '',
     'live tuning',
     `  player  accel ${t.player.accel}  damp ${t.player.damping}  max ${t.player.maxSpeed}  mass ${t.player.mass}`,

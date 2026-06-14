@@ -24,7 +24,7 @@
 
 <div id="menu">
   <h1>SOCCER PUCKS</h1>
-  <p class="subtitle">3D arcade ball — pick your hero</p>
+  <p class="subtitle">3D arcade ball - pick your hero</p>
   <div id="hero-pick">
     <button class="hero-btn selected" data-hero="sam">
       <span class="hero-name">Sam</span>
@@ -35,11 +35,30 @@
       <span class="hero-power">Power: Magnet</span>
     </button>
   </div>
-  <button id="start-btn">Local Play</button>
-  <p class="controls-hint">WASD / Arrows to move &nbsp;·&nbsp; Space to shoot &nbsp;·&nbsp; Shift for power</p>
+  <div id="mode-actions">
+    <button id="start-btn" class="primary-btn">Local Play</button>
+    <button id="host-btn" class="secondary-btn">Host Online</button>
+    <button id="join-btn" class="secondary-btn">Join Online</button>
+  </div>
+  <div id="online-panel" class="hidden">
+    <div class="online-header">
+      <strong id="online-title">Online</strong>
+      <span id="online-status">Idle</span>
+    </div>
+    <label class="online-field" id="primary-code-field">
+      <span id="primary-code-label">Room Code</span>
+      <input id="primary-code" type="text" maxlength="6" spellcheck="false" autocomplete="off" />
+    </label>
+    <div class="online-actions">
+      <button id="copy-primary-btn" class="tiny-btn hidden">Copy Room</button>
+      <button id="join-room-btn" class="tiny-btn hidden">Join Room</button>
+      <button id="cancel-online-btn" class="tiny-btn danger-btn">Cancel</button>
+    </div>
+  </div>
+  <p class="controls-hint">WASD / Arrows to move &nbsp;&middot;&nbsp; Space to shoot &nbsp;&middot;&nbsp; Shift for power</p>
 </div>
 
-<div id="loading" class="hidden">Loading stadium…</div>
+<div id="loading" class="hidden">Loading stadium...</div>
 
 <script type="module" src="src/main.js"></script>
 </body>

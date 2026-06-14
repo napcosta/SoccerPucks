@@ -33,6 +33,8 @@ html, body {
   align-items: center;
   justify-content: center;
   gap: 28px;
+  padding: 32px 16px;
+  overflow-y: auto;
   background: radial-gradient(ellipse at center, rgba(20, 24, 40, 0.88), rgba(8, 8, 12, 0.97));
   z-index: 10;
 }
@@ -40,7 +42,7 @@ html, body {
 #menu h1 {
   font-size: 72px;
   font-weight: 900;
-  letter-spacing: 5px;
+  letter-spacing: 0;
   font-style: italic;
   background: linear-gradient(180deg, #fff 30%, #6ea8ff);
   -webkit-background-clip: text;
@@ -93,20 +95,37 @@ html, body {
   color: #9fb0d0;
 }
 
-#start-btn {
+#mode-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.primary-btn,
+.secondary-btn {
   font-size: 26px;
   font-weight: 700;
   padding: 16px 64px;
-  border: none;
   border-radius: 10px;
-  background: linear-gradient(180deg, #4a7ee0, #2f56a8);
   color: #fff;
   cursor: pointer;
-  letter-spacing: 2px;
+  letter-spacing: 0;
   transition: transform 0.12s, box-shadow 0.12s;
 }
 
-#start-btn:hover {
+.primary-btn {
+  border: none;
+  background: linear-gradient(180deg, #4a7ee0, #2f56a8);
+}
+
+.secondary-btn {
+  border: 1px solid rgba(110, 168, 255, 0.45);
+  background: rgba(22, 27, 44, 0.9);
+}
+
+.primary-btn:hover,
+.secondary-btn:hover {
   transform: scale(1.04);
   box-shadow: 0 8px 32px rgba(74, 126, 224, 0.45);
 }
@@ -114,6 +133,100 @@ html, body {
 .controls-hint {
   font-size: 14px;
   color: #7e89a3;
+}
+
+#online-panel {
+  width: min(680px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(110, 168, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(10, 13, 24, 0.86);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+}
+
+.online-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+#online-title {
+  font-size: 15px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #dfe6f5;
+}
+
+#online-status {
+  min-width: 130px;
+  text-align: right;
+  font-size: 13px;
+  color: #9fb0d0;
+}
+
+.online-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #aab4cc;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.online-field input {
+  width: 100%;
+  height: 54px;
+  border: 1px solid rgba(110, 168, 255, 0.28);
+  border-radius: 6px;
+  padding: 10px;
+  background: #080b16;
+  color: #eef4ff;
+  font: 800 26px Consolas, "Courier New", monospace;
+  letter-spacing: 4px;
+  text-align: center;
+  text-transform: uppercase;
+  outline: none;
+}
+
+.online-field input:focus {
+  border-color: rgba(110, 168, 255, 0.7);
+  box-shadow: 0 0 0 3px rgba(110, 168, 255, 0.13);
+}
+
+.online-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tiny-btn {
+  min-height: 34px;
+  padding: 8px 12px;
+  border: 1px solid rgba(110, 168, 255, 0.35);
+  border-radius: 6px;
+  background: rgba(110, 168, 255, 0.13);
+  color: #dfe6f5;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tiny-btn:hover {
+  background: rgba(110, 168, 255, 0.24);
+}
+
+.danger-btn {
+  border-color: rgba(255, 106, 94, 0.35);
+  background: rgba(255, 106, 94, 0.12);
+}
+
+.danger-btn:hover {
+  background: rgba(255, 106, 94, 0.22);
 }
 
 #hud {
@@ -171,6 +284,62 @@ html, body {
   color: #aab4cc;
   background: rgba(8, 8, 12, 0.95);
   z-index: 9;
+}
+
+@media (max-width: 700px), (max-height: 900px) {
+  #menu {
+    justify-content: flex-start;
+    gap: 18px;
+    padding: 28px 16px;
+  }
+
+  #menu h1 {
+    font-size: 44px;
+  }
+
+  #menu .subtitle {
+    margin-top: -8px;
+    font-size: 15px;
+    text-align: center;
+  }
+
+  #hero-pick {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+  }
+
+  .hero-btn {
+    width: 150px;
+    padding: 14px 10px;
+    border-radius: 8px;
+  }
+
+  .hero-name {
+    font-size: 20px;
+  }
+
+  .primary-btn,
+  .secondary-btn {
+    font-size: 18px;
+    padding: 12px 18px;
+  }
+
+  #online-panel {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .online-field input {
+    height: 48px;
+    font-size: 22px;
+  }
+
+  .controls-hint {
+    max-width: 340px;
+    text-align: center;
+    line-height: 1.4;
+  }
 }
 
 #debug-panel {
