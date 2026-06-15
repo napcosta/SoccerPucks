@@ -159,6 +159,7 @@ export class Game {
     };
     player.onPowerFX = (type) => this.spawnPowerFX(player, type);
     player.hero = createHero(heroKind, player);
+    if (heroKind === 'tesla') player.antennaFX = createTeslaAntennaFX(mesh);
     return player;
   }
 
@@ -236,7 +237,10 @@ export class Game {
       this.predictLocalPlayer(dt);
     }
 
-    for (const p of this.players) p.mixer.update(dt);
+    for (const p of this.players) {
+      p.mixer.update(dt);
+      if (p.antennaFX) updateTeslaAntennaFX(p.antennaFX, dt, Boolean(p.hero?.active));
+    }
     this.ball.mixer.update(dt);
     this.syncVisuals(dt);
     this.updateEffects(dt);
@@ -554,7 +558,10 @@ export class Game {
 
   dispose() {
     clearTimeout(this.bannerTimeout);
-    for (const p of this.players) this.scene.remove(p.mesh);
+    for (const p of this.players) {
+      if (p.antennaFX) disposeTeslaAntennaFX(p.antennaFX);
+      this.scene.remove(p.mesh);
+    }
     this.scene.remove(this.ball.mesh);
     for (const fx of this.effects) {
       if (fx.dispose) fx.dispose(this.scene);
@@ -641,4 +648,204 @@ function updateFacingTowardBall(player, ballBody) {
     player.facingX = dx / len;
     player.facingZ = dz / len;
   }
+}
+
+function createTeslaAntennaFX(mesh) {
+  mesh.updateMatrixWorld(true);
+  const bulb = mesh.getObjectByName('Bulb') || mesh.getObjectByName('bulb');
+  if (bulb) tintTeslaAntennaBulb(bulb);
+  const anchor = bulb || mesh;
+  const group = new THREE.Group();
+  group.name = 'TeslaAntennaFX';
+
+  if (anchor === mesh) group.position.copy(findTeslaFallbackTip(mesh));
+  anchor.add(group);
+  anchor.updateMatrixWorld(true);
+
+  const scale = new THREE.Vector3();
+  anchor.getWorldScale(scale);
+  const localScale = 1 / Math.max(scale.x, scale.y, scale.z, 0.001);
+  const glowColor = 0x8ef6ff;
+  const sparkColor = 0xc8fbff;
+
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(0.07 * localScale, 18, 12),
+    new THREE.MeshBasicMaterial({
+      color: glowColor,
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  group.add(core);
+
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(0.34 * localScale, 28, 16),
+    new THREE.MeshBasicMaterial({
+      color: 0x65ddff,
+      transparent: true,
+      opacity: 0.2,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  group.add(halo);
+
+  const rings = [0, 1, 2].map((i) => {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry((0.15 + i * 0.045) * localScale, (0.165 + i * 0.045) * localScale, 56),
+      new THREE.MeshBasicMaterial({
+        color: glowColor,
+        transparent: true,
+        opacity: 0.28,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      })
+    );
+    ring.rotation.set(i === 1 ? Math.PI / 2 : 0.45, i === 2 ? Math.PI / 2 : 0, i * 0.9);
+    group.add(ring);
+    return ring;
+  });
+
+  const light = new THREE.PointLight(glowColor, 0.8, 2.4);
+  group.add(light);
+
+  const sparks = Array.from({ length: 8 }, () => {
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(12);
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const material = new THREE.LineBasicMaterial({
+      color: sparkColor,
+      transparent: true,
+      opacity: 0.7,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const line = new THREE.Line(geometry, material);
+    group.add(line);
+    const spark = { line, geometry, positions, material, life: 0, maxLife: 0.1, baseOpacity: 0.7 };
+    resetTeslaSpark(spark, localScale);
+    return spark;
+  });
+
+  return {
+    group,
+    core,
+    halo,
+    rings,
+    light,
+    sparks,
+    localScale,
+    time: Math.random() * 10,
+  };
+}
+
+function updateTeslaAntennaFX(fx, dt, active) {
+  fx.time += dt;
+  const power = active ? 1.35 : 1;
+  const pulse = 0.5 + Math.sin(fx.time * 8.5) * 0.5;
+
+  fx.core.scale.setScalar((0.85 + pulse * 0.28) * power);
+  fx.core.material.opacity = Math.min(1, 0.68 + pulse * 0.28);
+  fx.halo.scale.setScalar(0.85 + pulse * 0.22 + (active ? 0.18 : 0));
+  fx.halo.material.opacity = (active ? 0.3 : 0.2) + pulse * 0.06;
+  fx.light.intensity = (active ? 1.35 : 0.75) + pulse * 0.35;
+
+  for (let i = 0; i < fx.rings.length; i++) {
+    const ring = fx.rings[i];
+    const k = (fx.time * (0.7 + i * 0.16) + i * 0.33) % 1;
+    ring.scale.setScalar((0.55 + k * 1.75) * (active ? 1.08 : 1));
+    ring.rotation.z += dt * (0.8 + i * 0.32);
+    ring.material.opacity = (1 - k) * (active ? 0.48 : 0.3);
+  }
+
+  for (const spark of fx.sparks) {
+    spark.life -= dt * (active ? 1.25 : 1);
+    if (spark.life <= 0) resetTeslaSpark(spark, fx.localScale);
+    const fade = Math.max(0, spark.life / spark.maxLife);
+    spark.material.opacity = Math.min(1, spark.baseOpacity * fade * power);
+    spark.line.scale.setScalar(0.75 + (1 - fade) * 0.35);
+  }
+}
+
+function disposeTeslaAntennaFX(fx) {
+  fx.group.parent?.remove(fx.group);
+  fx.group.traverse((node) => {
+    if (node.geometry) node.geometry.dispose();
+    if (!node.material) return;
+    const materials = Array.isArray(node.material) ? node.material : [node.material];
+    for (const material of materials) material.dispose();
+  });
+}
+
+function tintTeslaAntennaBulb(bulb) {
+  bulb.traverse((node) => {
+    if (!node.isMesh && !node.isSkinnedMesh) return;
+    const materials = Array.isArray(node.material) ? node.material : [node.material];
+    for (const material of materials) {
+      if (material.color) material.color.set(0x7defff);
+      if (material.emissive) {
+        material.emissive.set(0x23cfff);
+        material.emissiveIntensity = 0.55;
+      }
+      material.needsUpdate = true;
+    }
+  });
+}
+
+function resetTeslaSpark(spark, localScale) {
+  const theta = Math.random() * Math.PI * 2;
+  const y = THREE.MathUtils.randFloatSpread(0.8);
+  const radial = Math.sqrt(Math.max(0.2, 1 - y * y));
+  const dir = new THREE.Vector3(Math.cos(theta) * radial, y, Math.sin(theta) * radial).normalize();
+  const side = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
+  const length = THREE.MathUtils.randFloat(0.2, 0.52) * localScale;
+  const kink = THREE.MathUtils.randFloat(0.045, 0.13) * localScale;
+
+  writeTeslaSparkPoint(spark.positions, 0, 0, 0, 0);
+  writeTeslaSparkPoint(
+    spark.positions,
+    1,
+    dir.x * length * 0.34 + side.x * kink,
+    dir.y * length * 0.34 + side.y * kink,
+    dir.z * length * 0.34 + side.z * kink
+  );
+  writeTeslaSparkPoint(
+    spark.positions,
+    2,
+    dir.x * length * 0.68 - side.x * kink * 0.65,
+    dir.y * length * 0.68 - side.y * kink * 0.65,
+    dir.z * length * 0.68 - side.z * kink * 0.65
+  );
+  writeTeslaSparkPoint(spark.positions, 3, dir.x * length, dir.y * length, dir.z * length);
+
+  spark.geometry.attributes.position.needsUpdate = true;
+  spark.maxLife = THREE.MathUtils.randFloat(0.055, 0.14);
+  spark.life = spark.maxLife;
+  spark.baseOpacity = THREE.MathUtils.randFloat(0.55, 0.95);
+}
+
+function writeTeslaSparkPoint(positions, index, x, y, z) {
+  const offset = index * 3;
+  positions[offset] = x;
+  positions[offset + 1] = y;
+  positions[offset + 2] = z;
+}
+
+function findTeslaFallbackTip(mesh) {
+  mesh.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(mesh);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const tip = new THREE.Vector3(
+    center.x + size.x * 0.18,
+    box.max.y - size.y * 0.08,
+    center.z - size.z * 0.1
+  );
+  mesh.worldToLocal(tip);
+  return tip;
 }
