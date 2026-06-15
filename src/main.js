@@ -10,7 +10,7 @@ initDebugPanel();
 
 const PLAYER_SPAWN_Z = 7.8;
 const INPUT_RATE = 30;
-const SNAPSHOT_RATE = 20;
+const SNAPSHOT_RATE = 45;
 const EMPTY_COMMANDS = Object.freeze({ moveX: 0, moveZ: 0, shoot: false, power: false });
 
 const canvas = document.getElementById('game-canvas');

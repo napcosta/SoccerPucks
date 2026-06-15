@@ -20,6 +20,16 @@ import { TUNING } from './tuning.js';
 
 const SPAWN_Z = 7.8;
 const EMPTY_SCREEN_COMMANDS = Object.freeze({ moveX: 0, moveZ: 0, shoot: false, power: false });
+const REMOTE_HERO_VISUAL = Object.freeze({
+  lead: 0.05,
+  response: 30,
+  snapDistance: 2.5,
+});
+const REMOTE_BALL_VISUAL = Object.freeze({
+  lead: 0.075,
+  response: 45,
+  snapDistance: 1.6,
+});
 
 export class Game {
   constructor({
@@ -102,6 +112,8 @@ export class Game {
       mesh,
       mixer,
       heading: 0,
+      visualX: 0,
+      visualZ: 0,
       surfaceY,
     };
   }
@@ -139,6 +151,8 @@ export class Game {
       facingZ: -Math.sign(spawnZ),
       shootHeld: false,
       powerHeld: false,
+      visualX: 0,
+      visualZ: spawnZ,
       surfaceY,
     };
     player.onPowerFX = (type) => this.spawnPowerFX(player, type);
@@ -160,11 +174,13 @@ export class Game {
     this.ball.body.z = 0;
     this.ball.body.vx = 0;
     this.ball.body.vz = 0;
+    resetVisualPosition(this.ball);
     for (const p of this.players) {
       p.body.x = 0;
       p.body.z = p.spawnZ;
       p.body.vx = 0;
       p.body.vz = 0;
+      resetVisualPosition(p);
       updateFacingTowardBall(p, this.ball.body);
       if (p.hero.active) p.hero.release?.(this.ball.body);
       this.playAction(p, 'Idle');
@@ -354,14 +370,18 @@ export class Game {
   syncVisuals(dt) {
     const ballBody = this.ball.body;
     for (const p of this.players) {
-      p.mesh.position.set(p.body.x, p.surfaceY, p.body.z);
+      const smoothRemote = !this.authoritative && this.state === 'playing' && p.control === 'remote';
+      const pos = syncVisualPosition(p, dt, smoothRemote, REMOTE_HERO_VISUAL);
+      p.mesh.position.set(pos.x, p.surfaceY, pos.z);
       if (this.state !== 'playing') updateFacingTowardBall(p, ballBody);
       const targetRot = Math.atan2(p.facingX, p.facingZ);
       p.mesh.rotation.y = dampAngle(p.mesh.rotation.y, targetRot, 12, dt);
     }
 
     const b = this.ball;
-    b.mesh.position.set(b.body.x, b.surfaceY, b.body.z);
+    const smoothBall = !this.authoritative && this.state === 'playing';
+    const ballPos = syncVisualPosition(b, dt, smoothBall, REMOTE_BALL_VISUAL);
+    b.mesh.position.set(ballPos.x, b.surfaceY, ballPos.z);
     const speed = Math.hypot(b.body.vx, b.body.vz);
     if (speed > 0.4) {
       const target = Math.atan2(b.body.vx, b.body.vz);
@@ -547,6 +567,40 @@ function applyBody(body, snapshot) {
   body.z = snapshot.z;
   body.vx = snapshot.vx;
   body.vz = snapshot.vz;
+}
+
+function resetVisualPosition(entity) {
+  entity.visualX = entity.body.x;
+  entity.visualZ = entity.body.z;
+}
+
+function syncVisualPosition(entity, dt, smooth, visual) {
+  const body = entity.body;
+  if (!smooth) {
+    resetVisualPosition(entity);
+    return body;
+  }
+
+  if (!Number.isFinite(entity.visualX) || !Number.isFinite(entity.visualZ)) {
+    resetVisualPosition(entity);
+  }
+
+  const targetX = body.x + body.vx * visual.lead;
+  const targetZ = body.z + body.vz * visual.lead;
+  const dx = targetX - entity.visualX;
+  const dz = targetZ - entity.visualZ;
+  const snapDistanceSq = visual.snapDistance * visual.snapDistance;
+
+  if (dx * dx + dz * dz > snapDistanceSq) {
+    entity.visualX = body.x;
+    entity.visualZ = body.z;
+  } else {
+    const t = 1 - Math.exp(-visual.response * dt);
+    entity.visualX += dx * t;
+    entity.visualZ += dz * t;
+  }
+
+  return { x: entity.visualX, z: entity.visualZ };
 }
 
 function serializeHero(hero) {
