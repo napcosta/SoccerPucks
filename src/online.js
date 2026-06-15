@@ -3,6 +3,7 @@ const ROOM_PREFIX = 'soccer-pucks-';
 const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ROOM_LENGTH = 6;
 const HOST_CREATE_ATTEMPTS = 5;
+export const MAX_GUESTS = 3;
 
 const PEERJS_URLS = [
   'https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js',
@@ -77,6 +78,7 @@ class LobbySession {
     this.handlers = handlers;
     this.peer = null;
     this.connection = null;
+    this.connections = new Map();
     this.closed = false;
   }
 
@@ -102,7 +104,7 @@ class LobbySession {
       this.peer.on('error', (err) => this.handlePeerError(err));
       this.peer.on('close', () => this.finishClose());
       this.peer.on('disconnected', () => {
-        if (!this.connection?.open) this.handlers.onStatus?.('Signaling disconnected');
+        if (!this.hasOpenConnections()) this.handlers.onStatus?.('Signaling disconnected');
       });
     });
   }
@@ -114,9 +116,12 @@ class LobbySession {
         return;
       }
 
-      if (this.connection?.open) {
-        connection.on('open', () => connection.send({ type: 'roomFull' }));
-        connection.close();
+      const shouldAccept = this.handlers.shouldAcceptConnection?.(this, connection) !== false;
+      if (!shouldAccept || this.connections.size >= MAX_GUESTS) {
+        connection.on('open', () => {
+          connection.send({ type: 'roomFull' });
+          setTimeout(() => connection.close(), 0);
+        });
         return;
       }
 
@@ -134,38 +139,78 @@ class LobbySession {
   }
 
   attachConnection(connection) {
-    this.connection = connection;
+    const connectionId = connectionIdFor(connection);
     connection.on('open', () => {
+      if (this.role === 'host') this.connections.set(connectionId, connection);
+      else this.connection = connection;
       this.handlers.onStatus?.('Connected');
-      this.handlers.onOpen?.(this);
+      this.handlers.onOpen?.(this, connection, connectionId);
     });
     connection.on('data', (message) => {
-      this.handlers.onMessage?.(message, this);
+      this.handlers.onMessage?.(message, this, connection, connectionId);
     });
-    connection.on('close', () => this.finishClose());
+    connection.on('close', () => this.handleConnectionClose(connection, connectionId));
     connection.on('error', (err) => {
       this.handlers.onStatus?.(messageForError(err));
-      this.finishClose();
+      this.handleConnectionClose(connection, connectionId);
     });
   }
 
   send(message) {
-    if (!this.connection?.open) return false;
-    this.connection.send(message);
+    if (this.role === 'host') {
+      let sent = false;
+      for (const connection of this.connections.values()) {
+        if (!connection.open) continue;
+        connection.send(message);
+        sent = true;
+      }
+      return sent;
+    }
+
+    return this.sendTo(this.connection, message);
+  }
+
+  sendTo(connectionOrId, message) {
+    const connection =
+      typeof connectionOrId === 'string' ? this.connections.get(connectionOrId) : connectionOrId;
+    if (!connection?.open) return false;
+    connection.send(message);
     return true;
   }
 
   close() {
     this.closed = true;
     this.connection?.close();
+    for (const connection of this.connections.values()) connection.close();
+    this.connections.clear();
     this.peer?.destroy();
     this.handlers.onStatus?.('Disconnected');
+  }
+
+  handleConnectionClose(connection, connectionId) {
+    if (this.closed) return;
+
+    if (this.role === 'host') {
+      this.connections.delete(connectionId);
+      this.handlers.onConnectionClose?.(this, connection, connectionId);
+      return;
+    }
+
+    this.finishClose();
   }
 
   finishClose() {
     if (this.closed) return;
     this.closed = true;
     this.handlers.onClose?.(this);
+  }
+
+  hasOpenConnections() {
+    if (this.role !== 'host') return Boolean(this.connection?.open);
+    for (const connection of this.connections.values()) {
+      if (connection.open) return true;
+    }
+    return false;
   }
 
   handlePeerError(err) {
@@ -210,6 +255,14 @@ function generateRoomCode() {
   const bytes = new Uint8Array(ROOM_LENGTH);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (byte) => ROOM_ALPHABET[byte % ROOM_ALPHABET.length]).join('');
+}
+
+function connectionIdFor(connection) {
+  if (!connection.__soccerPucksConnectionId) {
+    connection.__soccerPucksConnectionId =
+      connection.peer || crypto.randomUUID?.() || generateRoomCode();
+  }
+  return connection.__soccerPucksConnectionId;
 }
 
 function roomPeerId(roomCode) {

@@ -25,6 +25,10 @@
 <div id="menu">
   <h1>SOCCER PUCKS</h1>
   <p class="subtitle">3D arcade ball - pick your hero</p>
+  <label id="nickname-field">
+    <span>Nickname</span>
+    <input id="nickname-input" type="text" maxlength="16" spellcheck="false" autocomplete="off" />
+  </label>
   <div id="hero-pick">
     <button class="hero-btn selected" data-hero="sam">
       <span class="hero-name">Sam</span>
@@ -47,10 +51,14 @@
     </div>
     <label class="online-field" id="primary-code-field">
       <span id="primary-code-label">Room Code</span>
-      <input id="primary-code" type="text" maxlength="6" spellcheck="false" autocomplete="off" />
+      <span class="online-code-row">
+        <button id="copy-primary-btn" class="tiny-btn hidden" type="button">Copy Room</button>
+        <input id="primary-code" type="text" maxlength="6" spellcheck="false" autocomplete="off" />
+      </span>
     </label>
+    <div id="lobby-roster" class="lobby-roster hidden"></div>
     <div class="online-actions">
-      <button id="copy-primary-btn" class="tiny-btn hidden">Copy Room</button>
+      <button id="start-online-btn" class="tiny-btn hidden" disabled>Start Match</button>
       <button id="join-room-btn" class="tiny-btn hidden">Join Room</button>
       <button id="cancel-online-btn" class="tiny-btn danger-btn">Cancel</button>
     </div>

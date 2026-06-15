@@ -57,6 +57,35 @@ html, body {
   margin-top: -18px;
 }
 
+#nickname-field {
+  width: min(360px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #aab4cc;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+#nickname-input {
+  height: 44px;
+  border: 1px solid rgba(110, 168, 255, 0.28);
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: #080b16;
+  color: #eef4ff;
+  font: 700 18px "Segoe UI", Arial, sans-serif;
+  letter-spacing: 0;
+  outline: none;
+}
+
+#nickname-input:focus {
+  border-color: rgba(110, 168, 255, 0.7);
+  box-shadow: 0 0 0 3px rgba(110, 168, 255, 0.13);
+}
+
 #hero-pick {
   display: flex;
   gap: 18px;
@@ -199,10 +228,101 @@ html, body {
   box-shadow: 0 0 0 3px rgba(110, 168, 255, 0.13);
 }
 
+.online-code-row {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.online-code-row .tiny-btn {
+  min-width: 132px;
+}
+
+.online-code-row input {
+  flex: 1;
+  min-width: 0;
+}
+
 .online-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.lobby-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lobby-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 10px 12px;
+  border: 1px solid rgba(110, 168, 255, 0.22);
+  border-radius: 6px;
+  background: rgba(8, 11, 22, 0.78);
+}
+
+.lobby-player {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lobby-name {
+  overflow: hidden;
+  color: #eef4ff;
+  font-size: 15px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lobby-meta {
+  color: #9fb0d0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.team-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, 62px);
+  gap: 6px;
+}
+
+.team-choice {
+  min-height: 32px;
+  border: 1px solid rgba(110, 168, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(110, 168, 255, 0.08);
+  color: #dfe6f5;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.team-choice:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.team-choice.active:disabled {
+  opacity: 1;
+}
+
+.team-choice.red.active {
+  border-color: rgba(255, 106, 94, 0.75);
+  background: rgba(255, 106, 94, 0.24);
+}
+
+.team-choice.blue.active {
+  border-color: rgba(110, 168, 255, 0.8);
+  background: rgba(110, 168, 255, 0.24);
 }
 
 .tiny-btn {
@@ -218,6 +338,15 @@ html, body {
 
 .tiny-btn:hover {
   background: rgba(110, 168, 255, 0.24);
+}
+
+.tiny-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.tiny-btn:disabled:hover {
+  background: rgba(110, 168, 255, 0.13);
 }
 
 .danger-btn {
@@ -335,10 +464,29 @@ html, body {
     font-size: 22px;
   }
 
+  .lobby-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .team-toggle {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .controls-hint {
     max-width: 340px;
     text-align: center;
     line-height: 1.4;
+  }
+}
+
+@media (max-width: 700px) {
+  .online-code-row {
+    flex-direction: column;
+  }
+
+  .online-code-row .tiny-btn {
+    width: 100%;
   }
 }
 

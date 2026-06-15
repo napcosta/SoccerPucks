@@ -72,16 +72,17 @@ export class Game {
     const specs =
       playerSpecs ??
       [
-        { heroKind: playerHero, team: TEAM.RED, spawnZ: SPAWN_Z, control: 'local' },
+        { heroKind: playerHero, team: TEAM.RED, spawnX: 0, spawnZ: SPAWN_Z, control: 'local' },
         {
           heroKind: playerHero === 'sam' ? 'tesla' : 'sam',
           team: TEAM.BLUE,
+          spawnX: 0,
           spawnZ: -SPAWN_Z,
           control: 'ai',
         },
       ];
     this.players = specs.map((spec) =>
-      this.createPlayer(spec.heroKind, spec.team, spec.spawnZ, spec.control)
+      this.createPlayer(spec.heroKind, spec.team, spec.spawnX ?? 0, spec.spawnZ, spec.control)
     );
 
     this.resetPositions();
@@ -118,7 +119,7 @@ export class Game {
     };
   }
 
-  createPlayer(heroKind, team, spawnZ, control = 'ai') {
+  createPlayer(heroKind, team, spawnX, spawnZ, control = 'ai') {
     const gltfSource = heroKind === 'tesla' ? this.assets.tesla : this.assets.sam;
     const mesh = cloneHeroScene(gltfSource);
     const meshScale = (PLAYER.radius * 2) / 2.96;
@@ -141,8 +142,9 @@ export class Game {
       control,
       isHuman: control === 'local',
       isRemote: control === 'remote',
+      spawnX,
       spawnZ,
-      body: createBody(0, spawnZ, PLAYER.radius, PLAYER.mass),
+      body: createBody(spawnX, spawnZ, PLAYER.radius, PLAYER.mass),
       mesh,
       mixer,
       actions,
@@ -151,7 +153,7 @@ export class Game {
       facingZ: -Math.sign(spawnZ),
       shootHeld: false,
       powerHeld: false,
-      visualX: 0,
+      visualX: spawnX,
       visualZ: spawnZ,
       surfaceY,
     };
@@ -176,7 +178,7 @@ export class Game {
     this.ball.body.vz = 0;
     resetVisualPosition(this.ball);
     for (const p of this.players) {
-      p.body.x = 0;
+      p.body.x = p.spawnX;
       p.body.z = p.spawnZ;
       p.body.vx = 0;
       p.body.vz = 0;
@@ -321,7 +323,11 @@ export class Game {
     for (const p of this.players) {
       collideCircles(p.body, ballBody, ball.playerRestitution);
     }
-    collideCircles(this.players[0].body, this.players[1].body, 0.3);
+    for (let i = 0; i < this.players.length; i++) {
+      for (let j = i + 1; j < this.players.length; j++) {
+        collideCircles(this.players[i].body, this.players[j].body, 0.3);
+      }
+    }
 
     const scorer = goalScored(ballBody);
     if (scorer !== 0) this.handleGoal(scorer);

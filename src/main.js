@@ -2,22 +2,40 @@ import { loadAssets } from './assets.js';
 import { createRenderer, createCamera, buildWorld } from './scene.js';
 import { Game } from './game.js';
 import { readCommands } from './input.js';
-import { createHostSession, createGuestSession, normalizeRoomCode } from './online.js';
+import { createHostSession, createGuestSession, normalizeRoomCode, MAX_GUESTS } from './online.js';
 import { initDebugPanel, updatePhysicsOverlay } from './debug.js';
 import { TEAM } from './constants.js';
 
 initDebugPanel();
 
 const PLAYER_SPAWN_Z = 7.8;
+const MAX_ONLINE_PLAYERS = MAX_GUESTS + 1;
+const NICKNAME_MAX_LENGTH = 16;
 const INPUT_RATE = 30;
 const SNAPSHOT_RATE = 45;
 const EMPTY_COMMANDS = Object.freeze({ moveX: 0, moveZ: 0, shoot: false, power: false });
+const HERO_LABELS = Object.freeze({ sam: 'Sam', tesla: 'Tesla' });
+const TEAM_SPAWNS = Object.freeze({
+  [TEAM.RED]: Object.freeze([
+    Object.freeze({ x: 0, z: PLAYER_SPAWN_Z }),
+    Object.freeze({ x: 2.25, z: PLAYER_SPAWN_Z - 1.4 }),
+    Object.freeze({ x: -2.25, z: PLAYER_SPAWN_Z - 1.4 }),
+    Object.freeze({ x: 0, z: PLAYER_SPAWN_Z - 2.8 }),
+  ]),
+  [TEAM.BLUE]: Object.freeze([
+    Object.freeze({ x: 0, z: -PLAYER_SPAWN_Z }),
+    Object.freeze({ x: -2.25, z: -PLAYER_SPAWN_Z + 1.4 }),
+    Object.freeze({ x: 2.25, z: -PLAYER_SPAWN_Z + 1.4 }),
+    Object.freeze({ x: 0, z: -PLAYER_SPAWN_Z + 2.8 }),
+  ]),
+});
 
 const canvas = document.getElementById('game-canvas');
 const menu = document.getElementById('menu');
 const hudRoot = document.getElementById('hud');
 const loading = document.getElementById('loading');
 
+const nicknameInput = document.getElementById('nickname-input');
 const startBtn = document.getElementById('start-btn');
 const hostBtn = document.getElementById('host-btn');
 const joinBtn = document.getElementById('join-btn');
@@ -27,13 +45,29 @@ const onlineStatus = document.getElementById('online-status');
 const primaryCode = document.getElementById('primary-code');
 const primaryCodeLabel = document.getElementById('primary-code-label');
 const copyPrimaryBtn = document.getElementById('copy-primary-btn');
+const startOnlineBtn = document.getElementById('start-online-btn');
 const joinRoomBtn = document.getElementById('join-room-btn');
 const cancelOnlineBtn = document.getElementById('cancel-online-btn');
+const lobbyRoster = document.getElementById('lobby-roster');
 
 const hud = {
   powerFill: document.getElementById('power-fill'),
   banner: document.getElementById('banner'),
 };
+
+const defaultNickname = generateDefaultNickname();
+nicknameInput.value = defaultNickname;
+nicknameInput.addEventListener('input', () => {
+  if (onlineState?.role === 'host' && !onlineState.started) {
+    syncHostPlayerInfo();
+    renderHostLobbyRoster();
+    broadcastLobbyState();
+  }
+});
+nicknameInput.addEventListener('blur', () => {
+  nicknameInput.value = currentNickname();
+  syncLocalLobbyInfo();
+});
 
 let selectedHero = 'sam';
 for (const btn of document.querySelectorAll('.hero-btn')) {
@@ -41,6 +75,7 @@ for (const btn of document.querySelectorAll('.hero-btn')) {
     document.querySelector('.hero-btn.selected')?.classList.remove('selected');
     btn.classList.add('selected');
     selectedHero = btn.dataset.hero;
+    syncLocalLobbyInfo();
   });
 }
 
@@ -74,6 +109,9 @@ startBtn.addEventListener('click', startLocalMatch);
 hostBtn.addEventListener('click', startHostFlow);
 joinBtn.addEventListener('click', showJoinPanel);
 copyPrimaryBtn.addEventListener('click', () => copyCode(primaryCode, 'Room copied'));
+startOnlineBtn.addEventListener('click', () => {
+  startHostedMatch().catch((err) => setOnlineStatus(err.message || 'Could not start match'));
+});
 joinRoomBtn.addEventListener('click', joinRoom);
 cancelOnlineBtn.addEventListener('click', () => {
   closeOnlineSession();
@@ -119,7 +157,7 @@ async function startHostFlow() {
     setOnlineStatus('Creating room...');
     onlineSession = await createHostSession(createOnlineHandlers('host'));
     primaryCode.value = onlineSession.roomCode;
-    setOnlineStatus('Waiting for player');
+    updateHostLobbyStatus();
   } catch (err) {
     setOnlineStatus(err.message || 'Could not create room');
     closeOnlineSession();
@@ -154,39 +192,51 @@ async function joinRoom() {
 
 function createOnlineHandlers(role) {
   return {
+    shouldAcceptConnection: () => !(role === 'host' && onlineState?.started),
     onStatus: setOnlineStatus,
     onRoomCode: (roomCode) => {
       primaryCode.value = roomCode;
     },
-    onOpen: () => {
+    onOpen: (_session, _connection, connectionId) => {
       if (role === 'guest') {
-        onlineSession?.send({ type: 'hello', heroKind: selectedHero });
+        sendGuestHello();
+        setOnlineStatus('Connected - waiting for host');
+      } else {
+        setOnlineStatus('Player connecting...');
       }
-      setOnlineStatus(role === 'host' ? 'Player connected' : 'Connected');
     },
-    onMessage: (message) => handleOnlineMessage(role, message),
+    onMessage: (message, _session, _connection, connectionId) =>
+      handleOnlineMessage(role, message, connectionId),
+    onConnectionClose: (_session, _connection, connectionId) =>
+      handleOnlineConnectionClose(role, connectionId),
     onClose: () => handleOnlineClose(),
   };
 }
 
-function handleOnlineMessage(role, message) {
+function handleOnlineMessage(role, message, connectionId) {
   if (!message || !onlineState || role !== onlineState.role) return;
 
   if (role === 'host') {
     if (message.type === 'hello') {
-      onlineState.remoteHero = normalizeHero(message.heroKind);
-      startHostedMatch().catch((err) => setOnlineStatus(err.message || 'Could not start match'));
+      registerGuest(connectionId, message);
     } else if (message.type === 'input') {
-      onlineState.remoteCommands = normalizeCommands(message.commands);
+      const playerIndex = onlineState.connectionPlayerIndexes.get(connectionId);
+      if (playerIndex != null) {
+        onlineState.remoteCommands.set(playerIndex, normalizeCommands(message.commands));
+      }
     }
     return;
   }
 
   if (message.type === 'start') {
-    startGuestMatch(message.players).catch((err) => setOnlineStatus(err.message || 'Could not start match'));
+    startGuestMatch(message.players, message.localPlayerIndex).catch((err) =>
+      setOnlineStatus(err.message || 'Could not start match')
+    );
   } else if (message.type === 'roomFull') {
     setOnlineStatus('Room is full');
     closeOnlineSession(false);
+  } else if (message.type === 'lobby') {
+    updateGuestLobby(message);
   } else if (message.type === 'snapshot') {
     if (game) game.applySnapshot(message);
     else onlineState.pendingSnapshot = message;
@@ -199,23 +249,43 @@ function handleOnlineMessage(role, message) {
 }
 
 async function startHostedMatch() {
-  if (!onlineState || onlineState.started) return;
+  if (!onlineState || onlineState.role !== 'host' || onlineState.started) return;
 
-  const players = [
-    { heroKind: normalizeHero(selectedHero), team: TEAM.RED, spawnZ: PLAYER_SPAWN_Z },
-    { heroKind: normalizeHero(onlineState.remoteHero), team: TEAM.BLUE, spawnZ: -PLAYER_SPAWN_Z },
-  ];
+  syncHostPlayerInfo();
+  const guests = onlineState.guests.slice(0, MAX_GUESTS);
+  const roster = currentHostRoster();
+  if (guests.length < 1 || !hasBothTeams(roster)) {
+    updateHostLobbyStatus();
+    return;
+  }
 
-  await startOnlineGame('host', players);
-  onlineSession?.send({ type: 'start', players });
+  const players = buildOnlinePlayers(roster);
+
+  onlineState.connectionPlayerIndexes.clear();
+  onlineState.remoteCommands.clear();
+  guests.forEach((guest, index) => {
+    const playerIndex = index + 1;
+    onlineState.connectionPlayerIndexes.set(guest.connectionId, playerIndex);
+    onlineState.remoteCommands.set(playerIndex, { ...EMPTY_COMMANDS });
+  });
+
+  await startOnlineGame('host', players, 0);
+  guests.forEach((guest, index) => {
+    onlineSession?.sendTo(guest.connectionId, {
+      type: 'start',
+      players,
+      localPlayerIndex: index + 1,
+    });
+  });
 }
 
-async function startGuestMatch(players) {
+async function startGuestMatch(players, localPlayerIndex = 1) {
   if (!onlineState || onlineState.started) return;
-  await startOnlineGame('guest', sanitizePlayers(players));
+  const sanitizedPlayers = sanitizePlayers(players);
+  await startOnlineGame('guest', sanitizedPlayers, localPlayerIndex);
 }
 
-async function startOnlineGame(role, players) {
+async function startOnlineGame(role, players, localPlayerIndex = role === 'host' ? 0 : 1) {
   try {
     await ensureAssets();
   } catch (err) {
@@ -226,7 +296,7 @@ async function startOnlineGame(role, players) {
   enterGameView();
   game?.dispose();
 
-  const localPlayerIndex = role === 'host' ? 0 : 1;
+  const safeLocalPlayerIndex = clampPlayerIndex(localPlayerIndex, players.length);
   game = new Game({
     scene,
     camera,
@@ -235,11 +305,12 @@ async function startOnlineGame(role, players) {
     scoreboard,
     playerSpecs: players.map((player, index) => ({
       ...player,
-      control: index === localPlayerIndex ? 'local' : 'remote',
+      control: index === safeLocalPlayerIndex ? 'local' : 'remote',
     })),
-    localPlayerIndex,
+    localPlayerIndex: safeLocalPlayerIndex,
     authoritative: role === 'host',
-    inputProvider: () => onlineState?.remoteCommands ?? EMPTY_COMMANDS,
+    inputProvider: (_player, index) =>
+      onlineState?.remoteCommands.get(index) ?? EMPTY_COMMANDS,
   });
 
   if (role === 'host') {
@@ -295,12 +366,34 @@ function handleOnlineClose() {
   }
 }
 
+function handleOnlineConnectionClose(role, connectionId) {
+  if (role !== 'host' || !onlineState) return;
+
+  if (onlineState.started) {
+    onlineSession?.send({ type: 'matchEnded' });
+    onlineSession?.close();
+    handleOnlineClose();
+    return;
+  }
+
+  onlineState.guests = onlineState.guests.filter((guest) => guest.connectionId !== connectionId);
+  updateHostLobbyStatus();
+}
+
 function createOnlineState(role) {
   return {
     role,
     started: false,
-    remoteHero: 'tesla',
-    remoteCommands: { ...EMPTY_COMMANDS },
+    hostPlayer: {
+      connectionId: 'host',
+      nickname: currentNickname(),
+      heroKind: normalizeHero(selectedHero),
+      team: TEAM.RED,
+    },
+    guests: [],
+    lobbyPlayers: [],
+    remoteCommands: new Map(),
+    connectionPlayerIndexes: new Map(),
     inputSeq: 0,
     inputAccumulator: 0,
     snapshotSeq: 0,
@@ -320,13 +413,19 @@ function closeOnlineSession(clearState = true) {
 }
 
 function configureHostPanel() {
+  syncHostPlayerInfo();
   onlinePanel.classList.remove('hidden');
   onlineTitle.textContent = 'Host Online';
   primaryCodeLabel.textContent = 'Room Code';
   primaryCode.value = '';
   primaryCode.readOnly = true;
   copyPrimaryBtn.classList.remove('hidden');
+  startOnlineBtn.classList.remove('hidden');
+  startOnlineBtn.disabled = true;
+  startOnlineBtn.textContent = 'Start Match';
   joinRoomBtn.classList.add('hidden');
+  lobbyRoster.classList.remove('hidden');
+  renderHostLobbyRoster();
 }
 
 function configureJoinPanel() {
@@ -336,7 +435,11 @@ function configureJoinPanel() {
   primaryCode.value = '';
   primaryCode.readOnly = false;
   copyPrimaryBtn.classList.add('hidden');
+  startOnlineBtn.classList.add('hidden');
+  startOnlineBtn.disabled = true;
   joinRoomBtn.classList.remove('hidden');
+  lobbyRoster.classList.remove('hidden');
+  lobbyRoster.replaceChildren();
   setOnlineStatus('Enter room code');
   primaryCode.focus();
 }
@@ -344,11 +447,191 @@ function configureJoinPanel() {
 function resetOnlinePanel() {
   onlinePanel.classList.add('hidden');
   primaryCode.value = '';
+  startOnlineBtn.classList.add('hidden');
+  startOnlineBtn.disabled = true;
+  lobbyRoster.classList.add('hidden');
+  lobbyRoster.replaceChildren();
   setOnlineStatus('Idle');
 }
 
 function setOnlineStatus(text) {
   onlineStatus.textContent = text;
+}
+
+function registerGuest(connectionId, message) {
+  if (!connectionId || !onlineState || onlineState.role !== 'host' || onlineState.started) return;
+
+  const normalizedHero = normalizeHero(message?.heroKind);
+  const nickname = normalizeNickname(message?.nickname, `Guest ${onlineState.guests.length + 1}`);
+  const existingGuest = onlineState.guests.find((guest) => guest.connectionId === connectionId);
+  if (existingGuest) {
+    existingGuest.heroKind = normalizedHero;
+    existingGuest.nickname = nickname;
+    updateHostLobbyStatus();
+    return;
+  }
+
+  if (onlineState.guests.length >= MAX_GUESTS) {
+    onlineSession?.sendTo(connectionId, { type: 'roomFull' });
+    return;
+  }
+
+  onlineState.guests.push({
+    connectionId,
+    nickname,
+    heroKind: normalizedHero,
+    team: defaultTeamForPlayerIndex(onlineState.guests.length + 1),
+  });
+  updateHostLobbyStatus();
+}
+
+function updateHostLobbyStatus() {
+  if (!onlineState || onlineState.role !== 'host') return;
+
+  syncHostPlayerInfo();
+  renderHostLobbyRoster();
+
+  const guestCount = onlineState.guests.length;
+  const playerCount = guestCount + 1;
+  const teamsReady = hasBothTeams(currentHostRoster());
+  const canStart = guestCount > 0 && teamsReady && !onlineState.started;
+
+  startOnlineBtn.disabled = !canStart;
+  startOnlineBtn.textContent = playerCount > 2 ? `Start ${playerCount} Players` : 'Start Match';
+
+  if (guestCount === 0) {
+    setOnlineStatus(`Waiting for players (0/${MAX_GUESTS})`);
+  } else if (!teamsReady) {
+    setOnlineStatus('Pick red and blue teams');
+  } else {
+    setOnlineStatus(`${guestCount}/${MAX_GUESTS} joined`);
+  }
+
+  broadcastLobbyState();
+}
+
+function syncLocalLobbyInfo() {
+  if (!onlineState || onlineState.started) return;
+
+  if (onlineState.role === 'host') {
+    syncHostPlayerInfo();
+    updateHostLobbyStatus();
+  } else if (onlineState.role === 'guest' && onlineSession) {
+    sendGuestHello();
+  }
+}
+
+function syncHostPlayerInfo() {
+  if (!onlineState?.hostPlayer) return;
+  onlineState.hostPlayer.nickname = currentNickname();
+  onlineState.hostPlayer.heroKind = normalizeHero(selectedHero);
+}
+
+function sendGuestHello() {
+  if (!onlineSession || onlineState?.role !== 'guest' || onlineState.started) return;
+  onlineSession.send({
+    type: 'hello',
+    nickname: currentNickname(),
+    heroKind: normalizeHero(selectedHero),
+  });
+}
+
+function broadcastLobbyState() {
+  if (!onlineSession || onlineState?.role !== 'host' || onlineState.started) return;
+
+  onlineSession.send({
+    type: 'lobby',
+    players: publicLobbyPlayers(currentHostRoster()),
+    canStart: !startOnlineBtn.disabled,
+    status: onlineStatus.textContent,
+  });
+}
+
+function updateGuestLobby(message) {
+  if (!onlineState || onlineState.role !== 'guest' || onlineState.started) return;
+
+  onlineState.lobbyPlayers = sanitizeLobbyPlayers(message.players);
+  renderLobbyRoster(onlineState.lobbyPlayers, false);
+  setOnlineStatus(message.status || 'Waiting for host');
+}
+
+function currentHostRoster() {
+  if (!onlineState) return [];
+  return [onlineState.hostPlayer, ...onlineState.guests].filter(Boolean);
+}
+
+function publicLobbyPlayers(players) {
+  return players.map((player, index) => ({
+    nickname: normalizeNickname(player?.nickname, `Player ${index + 1}`),
+    heroKind: normalizeHero(player?.heroKind),
+    team: normalizeTeam(player?.team, defaultTeamForPlayerIndex(index)),
+    isHost: player?.connectionId === 'host' || Boolean(player?.isHost),
+  }));
+}
+
+function sanitizeLobbyPlayers(players) {
+  if (!Array.isArray(players)) return [];
+  return players.slice(0, MAX_ONLINE_PLAYERS).map((player, index) => ({
+    nickname: normalizeNickname(player?.nickname, `Player ${index + 1}`),
+    heroKind: normalizeHero(player?.heroKind),
+    team: normalizeTeam(player?.team, defaultTeamForPlayerIndex(index)),
+    isHost: Boolean(player?.isHost),
+  }));
+}
+
+function renderHostLobbyRoster() {
+  if (!onlineState || onlineState.role !== 'host') return;
+
+  renderLobbyRoster(currentHostRoster(), true);
+}
+
+function renderLobbyRoster(players, editable) {
+  lobbyRoster.replaceChildren();
+  lobbyRoster.classList.remove('hidden');
+
+  for (const player of players) {
+    const row = document.createElement('div');
+    row.className = 'lobby-row';
+
+    const details = document.createElement('div');
+    details.className = 'lobby-player';
+
+    const name = document.createElement('div');
+    name.className = 'lobby-name';
+    name.textContent = player.nickname;
+
+    const meta = document.createElement('div');
+    meta.className = 'lobby-meta';
+    meta.textContent = `${heroName(player.heroKind)}${player.isHost || player.connectionId === 'host' ? ' - Host' : ''}`;
+
+    details.appendChild(name);
+    details.appendChild(meta);
+
+    const teams = document.createElement('div');
+    teams.className = 'team-toggle';
+    teams.appendChild(createTeamButton(player, TEAM.RED, editable));
+    teams.appendChild(createTeamButton(player, TEAM.BLUE, editable));
+
+    row.appendChild(details);
+    row.appendChild(teams);
+    lobbyRoster.appendChild(row);
+  }
+}
+
+function createTeamButton(player, team, editable) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `team-choice ${teamClass(team)}`;
+  button.classList.toggle('active', player.team === team);
+  button.textContent = teamName(team);
+  button.disabled = !editable;
+  if (editable) {
+    button.addEventListener('click', () => {
+      player.team = team;
+      updateHostLobbyStatus();
+    });
+  }
+  return button;
 }
 
 async function copyCode(textarea, successText) {
@@ -375,6 +658,90 @@ function normalizeHero(heroKind) {
   return heroKind === 'tesla' ? 'tesla' : 'sam';
 }
 
+function heroName(heroKind) {
+  return HERO_LABELS[normalizeHero(heroKind)];
+}
+
+function generateDefaultNickname() {
+  const bytes = new Uint8Array(1);
+  crypto.getRandomValues(bytes);
+  return `Player ${100 + (bytes[0] % 900)}`;
+}
+
+function currentNickname() {
+  return normalizeNickname(nicknameInput.value, defaultNickname);
+}
+
+function normalizeNickname(value, fallback = 'Player') {
+  const normalized = String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, NICKNAME_MAX_LENGTH);
+  return normalized || fallback;
+}
+
+function normalizeTeam(team, fallback = TEAM.RED) {
+  const parsed = Number(team);
+  return parsed === TEAM.BLUE ? TEAM.BLUE : parsed === TEAM.RED ? TEAM.RED : fallback;
+}
+
+function defaultTeamForPlayerIndex(index) {
+  return index % 2 === 0 ? TEAM.RED : TEAM.BLUE;
+}
+
+function teamName(team) {
+  return team === TEAM.BLUE ? 'Blue' : 'Red';
+}
+
+function teamClass(team) {
+  return team === TEAM.BLUE ? 'blue' : 'red';
+}
+
+function clampPlayerIndex(index, playerCount) {
+  const parsed = Number(index);
+  if (!Number.isInteger(parsed)) return 0;
+  return Math.max(0, Math.min(playerCount - 1, parsed));
+}
+
+function buildOnlinePlayers(roster) {
+  if (!Array.isArray(roster) || roster.length < 2 || roster.length > MAX_ONLINE_PLAYERS) {
+    throw new Error('Invalid match setup');
+  }
+
+  const normalizedRoster = roster.map((player, index) => ({
+    nickname: normalizeNickname(player?.nickname, `Player ${index + 1}`),
+    heroKind: normalizeHero(player?.heroKind),
+    team: normalizeTeam(player?.team, defaultTeamForPlayerIndex(index)),
+  }));
+
+  if (!hasBothTeams(normalizedRoster)) {
+    throw new Error('Pick red and blue teams');
+  }
+
+  return assignPlayerSpawns(normalizedRoster);
+}
+
+function assignPlayerSpawns(players) {
+  const teamSlots = { [TEAM.RED]: 0, [TEAM.BLUE]: 0 };
+  return players.map((player, index) => {
+    const team = normalizeTeam(player.team, defaultTeamForPlayerIndex(index));
+    const slot = teamSlots[team]++;
+    const spawn = TEAM_SPAWNS[team][slot] ?? TEAM_SPAWNS[team][TEAM_SPAWNS[team].length - 1];
+    return {
+      nickname: normalizeNickname(player.nickname, `Player ${index + 1}`),
+      heroKind: normalizeHero(player.heroKind),
+      team,
+      spawnX: spawn.x,
+      spawnZ: spawn.z,
+    };
+  });
+}
+
+function hasBothTeams(players) {
+  return players.some((player) => player.team === TEAM.RED) &&
+    players.some((player) => player.team === TEAM.BLUE);
+}
+
 function normalizeCommands(commands = EMPTY_COMMANDS) {
   let moveX = Number(commands.moveX) || 0;
   let moveZ = Number(commands.moveZ) || 0;
@@ -392,15 +759,11 @@ function normalizeCommands(commands = EMPTY_COMMANDS) {
 }
 
 function sanitizePlayers(players) {
-  if (!Array.isArray(players) || players.length !== 2) {
+  if (!Array.isArray(players) || players.length < 2 || players.length > MAX_ONLINE_PLAYERS) {
     throw new Error('Invalid match setup');
   }
 
-  return players.map((player, index) => ({
-    heroKind: normalizeHero(player.heroKind),
-    team: index === 0 ? TEAM.RED : TEAM.BLUE,
-    spawnZ: index === 0 ? PLAYER_SPAWN_Z : -PLAYER_SPAWN_Z,
-  }));
+  return buildOnlinePlayers(players);
 }
 
 function updateOnlineTransport(dt) {
@@ -414,6 +777,7 @@ function updateOnlineTransport(dt) {
       onlineSession.send({
         type: 'input',
         seq: ++onlineState.inputSeq,
+        playerIndex: game?.localPlayerIndex,
         commands: normalizeCommands(readCommands()),
       });
     }
