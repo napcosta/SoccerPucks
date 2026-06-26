@@ -124,6 +124,78 @@ html, body {
   color: #9fb0d0;
 }
 
+#local-format {
+  width: 100%;
+}
+
+.setup-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+#local-format-label {
+  color: #aab4cc;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+#local-size-pick {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  max-width: 360px;
+}
+
+.match-size-btn {
+  appearance: none;
+  min-height: 52px;
+  border: 1px solid rgba(110, 168, 255, 0.22);
+  border-radius: 6px;
+  background: rgba(8, 11, 22, 0.78);
+  color: #aab4cc;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 7px 10px;
+  font-family: inherit;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+
+.match-size-btn:hover {
+  transform: translateY(-1px);
+  color: #eef4ff;
+  border-color: rgba(110, 168, 255, 0.42);
+  background: rgba(110, 168, 255, 0.11);
+}
+
+.match-size-btn.selected {
+  border-color: rgba(110, 168, 255, 0.82);
+  background: linear-gradient(180deg, rgba(74, 126, 224, 0.34), rgba(47, 86, 168, 0.24));
+  color: #eef4ff;
+  box-shadow: 0 0 20px rgba(110, 168, 255, 0.18);
+}
+
+.match-size-count {
+  font-size: 19px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.match-size-meta {
+  color: #9fb0d0;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.15;
+}
+
 #mode-actions {
   display: flex;
   flex-wrap: wrap;
@@ -176,6 +248,18 @@ html, body {
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
 }
 
+#local-panel {
+  width: min(940px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(110, 168, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(10, 13, 24, 0.86);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+}
+
 .online-header {
   display: flex;
   align-items: center;
@@ -183,6 +267,7 @@ html, body {
   gap: 14px;
 }
 
+#local-title,
 #online-title {
   font-size: 15px;
   letter-spacing: 1px;
@@ -190,6 +275,7 @@ html, body {
   color: #dfe6f5;
 }
 
+#local-status,
 #online-status {
   min-width: 130px;
   text-align: right;
@@ -325,6 +411,161 @@ html, body {
   background: rgba(110, 168, 255, 0.24);
 }
 
+#local-teams {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 54px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+}
+
+.local-team {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(110, 168, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(8, 11, 22, 0.66);
+}
+
+.local-team.red {
+  border-color: rgba(255, 106, 94, 0.38);
+  background: linear-gradient(180deg, rgba(255, 106, 94, 0.12), rgba(8, 11, 22, 0.68));
+}
+
+.local-team.blue {
+  border-color: rgba(110, 168, 255, 0.42);
+  background: linear-gradient(180deg, rgba(110, 168, 255, 0.14), rgba(8, 11, 22, 0.68));
+}
+
+.local-team-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.local-team-name {
+  color: #eef4ff;
+  font-size: 18px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.local-team.red .local-team-name {
+  color: #ffb2ac;
+}
+
+.local-team.blue .local-team-name {
+  color: #a9c9ff;
+}
+
+.local-team-side {
+  color: #9fb0d0;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.local-team-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#local-versus {
+  align-self: center;
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: 1px solid rgba(110, 168, 255, 0.24);
+  border-radius: 50%;
+  background: rgba(8, 11, 22, 0.84);
+  color: #dfe6f5;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.local-player {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-height: 110px;
+  padding: 12px;
+  border: 1px solid rgba(110, 168, 255, 0.22);
+  border-radius: 7px;
+  background: rgba(5, 8, 18, 0.76);
+}
+
+.local-team.red .local-player {
+  border-color: rgba(255, 106, 94, 0.25);
+}
+
+.local-team.blue .local-player {
+  border-color: rgba(110, 168, 255, 0.26);
+}
+
+.local-player-main {
+  min-width: 0;
+}
+
+.local-player-name {
+  overflow: hidden;
+  color: #eef4ff;
+  font-size: 17px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-player-role {
+  margin-top: 3px;
+  color: #9fb0d0;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hero-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.hero-choice {
+  min-height: 34px;
+  border: 1px solid rgba(110, 168, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(110, 168, 255, 0.08);
+  color: #dfe6f5;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.hero-choice:hover {
+  background: rgba(110, 168, 255, 0.18);
+}
+
+.hero-choice.active {
+  border-color: rgba(110, 168, 255, 0.82);
+  background: rgba(110, 168, 255, 0.26);
+}
+
+.local-team.red .hero-choice.active {
+  border-color: rgba(255, 106, 94, 0.82);
+  background: rgba(255, 106, 94, 0.22);
+}
+
+.local-team.blue .hero-choice.active {
+  border-color: rgba(110, 168, 255, 0.82);
+  background: rgba(110, 168, 255, 0.26);
+}
+
 .tiny-btn {
   min-height: 34px;
   padding: 8px 12px;
@@ -448,6 +689,15 @@ html, body {
     font-size: 20px;
   }
 
+  .setup-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  #local-size-pick {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .primary-btn,
   .secondary-btn {
     font-size: 18px;
@@ -467,6 +717,20 @@ html, body {
   .lobby-row {
     grid-template-columns: 1fr;
     align-items: stretch;
+  }
+
+  #local-teams {
+    grid-template-columns: 1fr;
+  }
+
+  #local-versus {
+    width: 100%;
+    height: 34px;
+    border-radius: 6px;
+  }
+
+  .hero-toggle {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .team-toggle {

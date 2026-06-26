@@ -36,9 +36,16 @@ const hudRoot = document.getElementById('hud');
 const loading = document.getElementById('loading');
 
 const nicknameInput = document.getElementById('nickname-input');
+const heroPick = document.getElementById('hero-pick');
 const startBtn = document.getElementById('start-btn');
 const hostBtn = document.getElementById('host-btn');
 const joinBtn = document.getElementById('join-btn');
+const localPanel = document.getElementById('local-panel');
+const localStatus = document.getElementById('local-status');
+const startLocalBtn = document.getElementById('start-local-btn');
+const cancelLocalBtn = document.getElementById('cancel-local-btn');
+const localRedRoster = document.getElementById('local-red-roster');
+const localBlueRoster = document.getElementById('local-blue-roster');
 const onlinePanel = document.getElementById('online-panel');
 const onlineTitle = document.getElementById('online-title');
 const onlineStatus = document.getElementById('online-status');
@@ -58,6 +65,7 @@ const hud = {
 const defaultNickname = generateDefaultNickname();
 nicknameInput.value = defaultNickname;
 nicknameInput.addEventListener('input', () => {
+  if (isLocalPanelOpen()) renderLocalRoster();
   if (onlineState?.role === 'host' && !onlineState.started) {
     syncHostPlayerInfo();
     renderHostLobbyRoster();
@@ -66,16 +74,33 @@ nicknameInput.addEventListener('input', () => {
 });
 nicknameInput.addEventListener('blur', () => {
   nicknameInput.value = currentNickname();
+  if (isLocalPanelOpen()) renderLocalRoster();
   syncLocalLobbyInfo();
 });
 
 let selectedHero = 'sam';
+const localHeroSelections = ['sam', 'tesla', 'tesla', 'sam'];
 for (const btn of document.querySelectorAll('.hero-btn')) {
   btn.addEventListener('click', () => {
     document.querySelector('.hero-btn.selected')?.classList.remove('selected');
     btn.classList.add('selected');
-    selectedHero = btn.dataset.hero;
+    selectedHero = normalizeHero(btn.dataset.hero);
+    localHeroSelections[0] = selectedHero;
+    if (isLocalPanelOpen()) renderLocalRoster();
     syncLocalLobbyInfo();
+  });
+}
+
+let selectedLocalTeamSize = 1;
+for (const btn of document.querySelectorAll('.match-size-btn')) {
+  btn.addEventListener('click', () => {
+    const previous = document.querySelector('.match-size-btn.selected');
+    previous?.classList.remove('selected');
+    previous?.setAttribute('aria-pressed', 'false');
+    btn.classList.add('selected');
+    btn.setAttribute('aria-pressed', 'true');
+    selectedLocalTeamSize = normalizeLocalTeamSize(btn.dataset.localSize);
+    if (isLocalPanelOpen()) renderLocalRoster();
   });
 }
 
@@ -105,7 +130,9 @@ async function ensureAssets() {
   loading.classList.add('hidden');
 }
 
-startBtn.addEventListener('click', startLocalMatch);
+startBtn.addEventListener('click', showLocalPanel);
+startLocalBtn.addEventListener('click', startLocalMatch);
+cancelLocalBtn.addEventListener('click', closeLocalPanel);
 hostBtn.addEventListener('click', startHostFlow);
 joinBtn.addEventListener('click', showJoinPanel);
 copyPrimaryBtn.addEventListener('click', () => copyCode(primaryCode, 'Room copied'));
@@ -128,6 +155,24 @@ primaryCode.addEventListener('keydown', (event) => {
   }
 });
 
+function showLocalPanel() {
+  closeOnlineSession();
+  resetOnlinePanel();
+  localHeroSelections[0] = normalizeHero(selectedHero);
+  localPanel.classList.remove('hidden');
+  heroPick.classList.add('hidden');
+  renderLocalRoster();
+}
+
+function closeLocalPanel() {
+  localPanel.classList.add('hidden');
+  heroPick.classList.remove('hidden');
+}
+
+function isLocalPanelOpen() {
+  return !localPanel.classList.contains('hidden');
+}
+
 async function startLocalMatch() {
   closeOnlineSession();
   resetOnlinePanel();
@@ -142,11 +187,20 @@ async function startLocalMatch() {
 
   enterGameView();
   game?.dispose();
-  game = new Game({ scene, camera, assets, hud, scoreboard, playerHero: selectedHero });
+  game = new Game({
+    scene,
+    camera,
+    assets,
+    hud,
+    scoreboard,
+    playerSpecs: buildLocalPlayers(selectedLocalTeamSize),
+    localPlayerIndex: 0,
+  });
   game.onMatchEnd = returnToMenu;
 }
 
 async function startHostFlow() {
+  closeLocalPanel();
   if (!ensureWebRtcAvailable()) return;
 
   closeOnlineSession();
@@ -165,7 +219,9 @@ async function startHostFlow() {
 }
 
 function showJoinPanel() {
+  closeLocalPanel();
   if (!ensureWebRtcAvailable()) return;
+
   closeOnlineSession();
   onlineState = createOnlineState('guest');
   configureJoinPanel();
@@ -347,6 +403,7 @@ function returnToMenu() {
   game = null;
   hudRoot.classList.add('hidden');
   menu.classList.remove('hidden');
+  closeLocalPanel();
   closeOnlineSession();
   resetOnlinePanel();
 }
@@ -579,6 +636,109 @@ function sanitizeLobbyPlayers(players) {
   }));
 }
 
+function renderLocalRoster() {
+  localRedRoster.replaceChildren();
+  localBlueRoster.replaceChildren();
+
+  for (const slot of localRosterSlots(selectedLocalTeamSize)) {
+    const row = document.createElement('div');
+    row.className = 'local-player';
+
+    const details = document.createElement('div');
+    details.className = 'local-player-main';
+
+    const name = document.createElement('div');
+    name.className = 'local-player-name';
+    name.textContent = slot.name;
+
+    const meta = document.createElement('div');
+    meta.className = 'local-player-role';
+    meta.textContent = slot.meta;
+
+    details.appendChild(name);
+    details.appendChild(meta);
+
+    const heroes = document.createElement('div');
+    heroes.className = 'hero-toggle';
+    heroes.appendChild(createLocalHeroButton(slot.selectionIndex, 'sam'));
+    heroes.appendChild(createLocalHeroButton(slot.selectionIndex, 'tesla'));
+
+    row.appendChild(details);
+    row.appendChild(heroes);
+    const roster = slot.team === TEAM.BLUE ? localBlueRoster : localRedRoster;
+    roster.appendChild(row);
+  }
+
+  updateLocalStatus();
+}
+
+function createLocalHeroButton(selectionIndex, heroKind) {
+  const normalizedHero = normalizeHero(heroKind);
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'hero-choice';
+  button.classList.toggle('active', localHeroSelections[selectionIndex] === normalizedHero);
+  button.setAttribute('aria-pressed', localHeroSelections[selectionIndex] === normalizedHero ? 'true' : 'false');
+  button.textContent = heroName(normalizedHero);
+  button.addEventListener('click', () => {
+    localHeroSelections[selectionIndex] = normalizedHero;
+    if (selectionIndex === 0) {
+      selectedHero = normalizedHero;
+      syncHeroPickerSelection();
+    }
+    renderLocalRoster();
+  });
+  return button;
+}
+
+function localRosterSlots(teamSize) {
+  const playersPerTeam = normalizeLocalTeamSize(teamSize);
+  const slots = [
+    {
+      selectionIndex: 0,
+      name: currentNickname(),
+      meta: 'You',
+      team: TEAM.RED,
+      teamSlot: 0,
+      control: 'local',
+    },
+    {
+      selectionIndex: 2,
+      name: 'AI Opponent',
+      meta: 'AI',
+      team: TEAM.BLUE,
+      teamSlot: 0,
+      control: 'ai',
+    },
+  ];
+
+  if (playersPerTeam === 2) {
+    slots.splice(1, 0, {
+      selectionIndex: 1,
+      name: 'AI Teammate',
+      meta: 'AI',
+      team: TEAM.RED,
+      teamSlot: 1,
+      control: 'ai',
+    });
+    slots.push({
+      selectionIndex: 3,
+      name: 'AI Opponent 2',
+      meta: 'AI',
+      team: TEAM.BLUE,
+      teamSlot: 1,
+      control: 'ai',
+    });
+  }
+
+  return slots;
+}
+
+function updateLocalStatus() {
+  const playersPerTeam = normalizeLocalTeamSize(selectedLocalTeamSize);
+  localStatus.textContent = `${playersPerTeam}x${playersPerTeam} ready`;
+}
+
 function renderHostLobbyRoster() {
   if (!onlineState || onlineState.role !== 'host') return;
 
@@ -655,11 +815,44 @@ function ensureWebRtcAvailable() {
 }
 
 function normalizeHero(heroKind) {
-  return heroKind === 'tesla' ? 'tesla' : 'sam';
+  if (heroKind === 'tesla') return 'tesla';
+  return 'sam';
 }
 
 function heroName(heroKind) {
   return HERO_LABELS[normalizeHero(heroKind)];
+}
+
+function syncHeroPickerSelection() {
+  for (const btn of document.querySelectorAll('.hero-btn')) {
+    btn.classList.toggle('selected', normalizeHero(btn.dataset.hero) === selectedHero);
+  }
+}
+
+function normalizeLocalTeamSize(teamSize) {
+  return Number(teamSize) === 2 ? 2 : 1;
+}
+
+function buildLocalPlayers(teamSize) {
+  return localRosterSlots(teamSize).map((slot) =>
+    localPlayerSpec(
+      slot.team,
+      slot.teamSlot,
+      localHeroSelections[slot.selectionIndex],
+      slot.control
+    )
+  );
+}
+
+function localPlayerSpec(team, slot, heroKind, control) {
+  const spawn = TEAM_SPAWNS[team][slot] ?? TEAM_SPAWNS[team][0];
+  return {
+    heroKind,
+    team,
+    spawnX: spawn.x,
+    spawnZ: spawn.z,
+    control,
+  };
 }
 
 function generateDefaultNickname() {

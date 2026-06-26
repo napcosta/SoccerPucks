@@ -48,6 +48,11 @@ export const HEROES = {
     holdDuration: 2.0,
     holdGap: 0.12,
   },
+  shaggy: {
+    name: 'Shaggy Slider',
+    powerCooldown: 8,
+    slideBurst: 7.5,
+  },
 };
 
 export const MATCH = {

@@ -14,17 +14,37 @@ sources to glTF.
 ## Run
 
 The game must be served over HTTP because GLB and texture loading does not work from
-`file://`. Any static server works from this folder:
+`file://`. Any static server works from this folder.
+
+Normal local run:
 
 ```powershell
-# PowerShell (no install needed)
 .\serve.ps1 -Port 8000
-
-# Stuck/broken server on port 8000?
-.\stop-server.bat
 ```
 
 Then open http://localhost:8000
+
+If port 8000 is stuck or broken:
+
+```powershell
+.\stop-server.bat
+```
+
+Codex Desktop note: if asked to start the server from the managed Codex
+environment, use the bundled workspace Python runtime when `python`/`node` are not
+on PATH:
+
+```powershell
+<bundled-python.exe> -m http.server 8000 --bind 127.0.0.1
+```
+
+Use `codex_app.load_workspace_dependencies` to find `<bundled-python.exe>`.
+If the process needs to keep running after the tool call exits, start it outside
+the sandbox. Then verify with:
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8000/ -UseBasicParsing
+```
 
 ## Play online
 
@@ -59,7 +79,7 @@ two to four total players.
 
 ## Gameplay
 
-- Local 1v1 vs AI, or online peer-to-peer with two to four players
+- Local 1v1 or 2v2 vs AI, or online peer-to-peer with two to four players
 - First pick a hero (Sam or Tesla)
 - 100 second matches, golden goal on a draw
 - Red defends the left goal, blue defends the right
@@ -80,4 +100,5 @@ Models are exported from the Unity project's `.blend` files with
 | `assets/ball.glb` | `Assets/Resources/Heroes/Ball/BallCleanup.blend` |
 | `assets/sam.glb` | `Assets/Resources/Heroes/Sam/Sam.blend` |
 | `assets/tesla.glb` | `Assets/Resources/Heroes/Tesla/TeslaBlend.blend` |
+| `assets/shaggy_slider.glb` | `tools/create_shaggy_slider.py` procedural concept-art model |
 | `assets/goal.glb` | `Assets/Models/goal.blend` |

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Soccer Pucks</title>
-<link rel="stylesheet" href="css/style.css" />
+<link rel="stylesheet" href="css/style.css?v=local-teams-1" />
 <script type="importmap">
 {
   "imports": {
@@ -43,6 +43,46 @@
     <button id="start-btn" class="primary-btn">Local Play</button>
     <button id="host-btn" class="secondary-btn">Host Online</button>
     <button id="join-btn" class="secondary-btn">Join Online</button>
+  </div>
+  <div id="local-panel" class="hidden">
+    <div class="online-header">
+      <strong id="local-title">Local Match</strong>
+      <span id="local-status">Choose format and heroes</span>
+    </div>
+    <div id="local-format" class="setup-row">
+      <span id="local-format-label">Format</span>
+      <div id="local-size-pick" role="group" aria-labelledby="local-format-label">
+        <button class="match-size-btn selected" type="button" data-local-size="1" aria-pressed="true">
+          <span class="match-size-count">1x1</span>
+          <span class="match-size-meta">Solo vs AI</span>
+        </button>
+        <button class="match-size-btn" type="button" data-local-size="2" aria-pressed="false">
+          <span class="match-size-count">2x2</span>
+          <span class="match-size-meta">AI teammate</span>
+        </button>
+      </div>
+    </div>
+    <div id="local-teams">
+      <section class="local-team red" aria-label="Red team">
+        <div class="local-team-header">
+          <span class="local-team-name">Red Team</span>
+          <span class="local-team-side">Your Side</span>
+        </div>
+        <div id="local-red-roster" class="local-team-roster"></div>
+      </section>
+      <div id="local-versus">VS</div>
+      <section class="local-team blue" aria-label="Blue team">
+        <div class="local-team-header">
+          <span class="local-team-name">Blue Team</span>
+          <span class="local-team-side">Opponents</span>
+        </div>
+        <div id="local-blue-roster" class="local-team-roster"></div>
+      </section>
+    </div>
+    <div class="online-actions">
+      <button id="start-local-btn" class="tiny-btn">Start Match</button>
+      <button id="cancel-local-btn" class="tiny-btn danger-btn">Cancel</button>
+    </div>
   </div>
   <div id="online-panel" class="hidden">
     <div class="online-header">

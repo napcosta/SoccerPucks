@@ -115,6 +115,36 @@ export class TeslaHero extends HeroBase {
   }
 }
 
+export class ShaggyHero extends HeroBase {
+  constructor(player) {
+    super(player);
+    this.def = HEROES.shaggy;
+  }
+
+  update(dt, commands, ball) {
+    this.tickCooldown(dt);
+    if (!commands.powerPressed || this.cooldownRemaining > 0) return;
+
+    let dx = commands.moveX;
+    let dz = commands.moveZ;
+    const inputLen = Math.hypot(dx, dz);
+    if (inputLen > 0.001) {
+      dx /= inputLen;
+      dz /= inputLen;
+    } else {
+      dx = this.player.facingX;
+      dz = this.player.facingZ;
+    }
+
+    this.player.body.vx += dx * this.def.slideBurst;
+    this.player.body.vz += dz * this.def.slideBurst;
+    this.cooldownRemaining = this.def.powerCooldown;
+    this.player.onPowerFX?.('dash');
+  }
+}
+
 export function createHero(kind, player) {
-  return kind === 'tesla' ? new TeslaHero(player) : new SamHero(player);
+  if (kind === 'tesla') return new TeslaHero(player);
+  if (kind === 'shaggy') return new ShaggyHero(player);
+  return new SamHero(player);
 }

@@ -120,13 +120,15 @@ export class Game {
   }
 
   createPlayer(heroKind, team, spawnX, spawnZ, control = 'ai') {
-    const gltfSource = heroKind === 'tesla' ? this.assets.tesla : this.assets.sam;
+    const gltfSource = heroGltfSource(this.assets, heroKind);
     const mesh = cloneHeroScene(gltfSource);
     const meshScale = (PLAYER.radius * 2) / 2.96;
     mesh.scale.setScalar(meshScale);
     tintHero(mesh, TEAM_COLORS[team]);
     const surfaceY = footLift(mesh) + PITCH.surfaceY;
     this.scene.add(mesh);
+    const intentLabel = createIntentLabel();
+    this.scene.add(intentLabel.sprite);
 
     const mixer = new THREE.AnimationMixer(mesh);
     const actions = {};
@@ -153,6 +155,8 @@ export class Game {
       facingZ: -Math.sign(spawnZ),
       shootHeld: false,
       powerHeld: false,
+      ai: { intent: 'attackBall', intentAge: 0, intentScore: 0 },
+      intentLabel,
       visualX: spawnX,
       visualZ: spawnZ,
       surfaceY,
@@ -248,7 +252,7 @@ export class Game {
     this.updateHud();
   }
 
-  commandsForPlayer(p, index, ballBody) {
+  commandsForPlayer(p, index, ballBody, dt) {
     if (p.control === 'local') return this.screenToWorld(readCommands());
 
     if (p.control === 'remote') {
@@ -262,7 +266,12 @@ export class Game {
     }
 
     if (DEBUG.disableAI) return { moveX: 0, moveZ: 0, shoot: false, power: false };
-    return computeAICommands(p, ballBody, Math.sign(p.spawnZ));
+    return computeAICommands(p, ballBody, {
+      players: this.players,
+      playerIndex: index,
+      dt,
+      defendZSign: Math.sign(p.spawnZ),
+    });
   }
 
   predictLocalPlayer(dt) {
@@ -290,7 +299,7 @@ export class Game {
       const p = this.players[i];
       p.body.mass = player.mass;
 
-      const raw = this.commandsForPlayer(p, i, ballBody);
+      const raw = this.commandsForPlayer(p, i, ballBody, dt);
 
       const body = p.body;
       body.vx += raw.moveX * player.accel * dt;
@@ -309,11 +318,13 @@ export class Game {
       const shootPressed = raw.shoot && !p.shootHeld;
       p.shootHeld = raw.shoot;
       if (shootPressed && isTouching(body, ballBody, player.shootRange)) {
-        const dx = ballBody.x - body.x;
-        const dz = ballBody.z - body.z;
+        const dx = Number.isFinite(raw.kickX) ? raw.kickX : ballBody.x - body.x;
+        const dz = Number.isFinite(raw.kickZ) ? raw.kickZ : ballBody.z - body.z;
         const len = Math.hypot(dx, dz) || 1;
-        ballBody.vx += (dx / len) * player.shootVelocity;
-        ballBody.vz += (dz / len) * player.shootVelocity;
+        const kickMultiplier = Number.isFinite(raw.kickMultiplier) ? raw.kickMultiplier : 1;
+        const kickVelocity = player.shootVelocity * kickMultiplier;
+        ballBody.vx += (dx / len) * kickVelocity;
+        ballBody.vz += (dz / len) * kickVelocity;
         if (p.hero.captured) p.hero.release(ballBody);
         this.spawnPowerFX(p, 'shoot');
       }
@@ -383,6 +394,7 @@ export class Game {
       const smoothRemote = !this.authoritative && this.state === 'playing' && p.control === 'remote';
       const pos = syncVisualPosition(p, dt, smoothRemote, REMOTE_HERO_VISUAL);
       p.mesh.position.set(pos.x, p.surfaceY, pos.z);
+      updateIntentLabel(p, pos);
       if (this.state !== 'playing') updateFacingTowardBall(p, ballBody);
       const targetRot = Math.atan2(p.facingX, p.facingZ);
       p.mesh.rotation.y = dampAngle(p.mesh.rotation.y, targetRot, 12, dt);
@@ -560,6 +572,7 @@ export class Game {
     clearTimeout(this.bannerTimeout);
     for (const p of this.players) {
       if (p.antennaFX) disposeTeslaAntennaFX(p.antennaFX);
+      disposeIntentLabel(p.intentLabel, this.scene);
       this.scene.remove(p.mesh);
     }
     this.scene.remove(this.ball.mesh);
@@ -569,6 +582,98 @@ export class Game {
     }
     this.effects.length = 0;
   }
+}
+
+function heroGltfSource(assets, heroKind) {
+  if (heroKind === 'tesla') return assets.tesla;
+  return assets.sam;
+}
+
+function createIntentLabel() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+  const context = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.center.set(0.5, 1);
+  sprite.scale.set(2.15, 0.54, 1);
+  sprite.renderOrder = 20;
+  return { canvas, context, texture, sprite, text: '', accent: '' };
+}
+
+function updateIntentLabel(player, pos) {
+  const label = player.intentLabel;
+  if (!label) return;
+
+  if (player.control !== 'ai' || !DEBUG.intentOverlay) {
+    label.sprite.visible = false;
+    return;
+  }
+
+  const text = labelTextForPlayer(player);
+  const accent = player.team === TEAM.BLUE ? '#6ea8ff' : '#ff6a5e';
+  if (label.text !== text || label.accent !== accent) {
+    drawIntentLabel(label, text, accent);
+  }
+
+  label.sprite.position.set(pos.x + 1.0, PITCH.surfaceY + 0.05, pos.z);
+  label.sprite.visible = true;
+}
+
+function labelTextForPlayer(player) {
+  return player.ai?.action ?? player.ai?.intent ?? 'ai';
+}
+
+function drawIntentLabel(label, text, accent) {
+  const { canvas, context } = label;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+
+  context.fillStyle = 'rgba(5, 8, 18, 0.72)';
+  context.strokeStyle = accent;
+  context.lineWidth = 5;
+  roundedRect(context, 24, 25, canvas.width - 48, canvas.height - 50, 22);
+  context.fill();
+  context.stroke();
+
+  context.font = '800 40px "Segoe UI", Arial, sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillStyle = '#eef4ff';
+  context.fillText(text, canvas.width / 2, canvas.height / 2 + 1);
+
+  label.text = text;
+  label.accent = accent;
+  label.texture.needsUpdate = true;
+}
+
+function roundedRect(context, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.lineTo(x + width - r, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + r);
+  context.lineTo(x + width, y + height - r);
+  context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  context.lineTo(x + r, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - r);
+  context.lineTo(x, y + r);
+  context.quadraticCurveTo(x, y, x + r, y);
+  context.closePath();
+}
+
+function disposeIntentLabel(label, scene) {
+  if (!label) return;
+  scene.remove(label.sprite);
+  label.texture.dispose();
+  label.sprite.material.dispose();
 }
 
 function serializeBody(body) {

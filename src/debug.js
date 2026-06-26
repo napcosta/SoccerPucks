@@ -8,6 +8,7 @@ export const DEBUG = {
   disableAI: false,
   slowMotion: false,
   physicsOverlay: false,
+  intentOverlay: false,
 };
 
 const TOGGLES = [
@@ -16,9 +17,11 @@ const TOGGLES = [
   { key: 'disableAI', label: 'Disable AI' },
   { key: 'slowMotion', label: 'Slow motion' },
   { key: 'physicsOverlay', label: 'Physics overlay' },
+  { key: 'intentOverlay', label: 'AI intentions' },
 ];
 
 const sliderInputs = [];
+const toggleInputs = new Map();
 
 function fmt(n, digits = 2) {
   return Number(n).toFixed(digits);
@@ -35,6 +38,12 @@ function syncSliderInputs() {
     input.value = v;
     valueSpan.textContent = fmt(v, sliderDigits(spec.step));
   }
+}
+
+function setDebugToggle(key, value) {
+  DEBUG[key] = Boolean(value);
+  const input = toggleInputs.get(key);
+  if (input) input.checked = DEBUG[key];
 }
 
 function buildTuningSliders(panel) {
@@ -117,8 +126,9 @@ export function initDebugPanel() {
     input.type = 'checkbox';
     input.checked = DEBUG[key];
     input.addEventListener('change', () => {
-      DEBUG[key] = input.checked;
+      setDebugToggle(key, input.checked);
     });
+    toggleInputs.set(key, input);
 
     const text = document.createElement('span');
     text.textContent = label;
@@ -132,7 +142,7 @@ export function initDebugPanel() {
 
   const hint = document.createElement('div');
   hint.id = 'debug-hint';
-  hint.textContent = 'Toggle with ` or F8';
+  hint.textContent = 'Toggle panel with ` or F8 - toggle AI intentions with \\';
   panel.appendChild(hint);
 
   document.body.appendChild(panel);
@@ -143,6 +153,14 @@ export function initDebugPanel() {
   document.body.appendChild(overlay);
 
   window.addEventListener('keydown', (e) => {
+    if (isTextEntryTarget(e.target)) return;
+
+    if (e.code === 'Backslash') {
+      if (!e.repeat) setDebugToggle('intentOverlay', !DEBUG.intentOverlay);
+      e.preventDefault();
+      return;
+    }
+
     if (e.code === 'Backquote' || e.code === 'F8') {
       panel.classList.toggle('hidden');
       e.preventDefault();
@@ -150,6 +168,14 @@ export function initDebugPanel() {
   });
 
   return panel;
+}
+
+function isTextEntryTarget(target) {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target?.isContentEditable
+  );
 }
 
 function bodySpeed(body) {
