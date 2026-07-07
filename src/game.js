@@ -11,7 +11,7 @@ import {
   goalScored,
 } from './physics.js';
 import { readCommands } from './input.js';
-import { computeAICommands } from './ai.js';
+import { computeAICommands, createTeamAIState, resetTeamAIState } from './ai.js';
 import { createHero } from './heroes.js';
 import { cloneHeroScene, tintHero, footLift } from './assets.js';
 import { spawnDashSmoke } from './effects.js';
@@ -95,6 +95,9 @@ export class Game {
         spec.nickname ?? `Player ${index + 1}`
       )
     );
+
+    this.aiTick = 0;
+    this.aiTeamStates = new Map();
 
     this.resetPositions();
     this.updateHud();
@@ -190,6 +193,7 @@ export class Game {
   }
 
   resetPositions() {
+    for (const state of this.aiTeamStates.values()) resetTeamAIState(state);
     this.ball.body.x = 0;
     this.ball.body.z = 0;
     this.ball.body.vx = 0;
@@ -425,7 +429,18 @@ export class Game {
       playerIndex: activePlayers.indexOf(p),
       dt,
       defendZSign: Math.sign(p.spawnZ),
+      teamState: this.teamAIState(p.team),
+      tick: this.aiTick,
     });
+  }
+
+  teamAIState(team) {
+    let state = this.aiTeamStates.get(team);
+    if (!state) {
+      state = createTeamAIState();
+      this.aiTeamStates.set(team, state);
+    }
+    return state;
   }
 
   predictLocalPlayer(dt) {
@@ -444,6 +459,7 @@ export class Game {
   }
 
   simulate(dt) {
+    this.aiTick += 1;
     const ballBody = this.ball.body;
     const player = TUNING.player;
     const ball = TUNING.ball;
@@ -478,9 +494,9 @@ export class Game {
         const len = Math.hypot(dx, dz) || 1;
         const kickMultiplier = Number.isFinite(raw.kickMultiplier) ? raw.kickMultiplier : 1;
         const kickVelocity = player.shootVelocity * kickMultiplier;
+        if (p.hero.captured) p.hero.release(ballBody);
         ballBody.vx += (dx / len) * kickVelocity;
         ballBody.vz += (dz / len) * kickVelocity;
-        if (p.hero.captured) p.hero.release(ballBody);
         this.spawnPowerFX(p, 'shoot');
       }
     }

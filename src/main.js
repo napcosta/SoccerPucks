@@ -3,7 +3,7 @@ import { createRenderer, createCamera, buildWorld } from './scene.js';
 import { Game } from './game.js';
 import { readCommands, setInputLocked } from './input.js';
 import { createHostSession, createGuestSession, normalizeRoomCode, MAX_GUESTS } from './online.js';
-import { initDebugPanel, updatePhysicsOverlay } from './debug.js';
+import { initDebugPanel, updatePhysicsOverlay, setIntentOverlay } from './debug.js';
 import { MATCH, TEAM } from './constants.js';
 
 initDebugPanel();
@@ -59,6 +59,13 @@ const startOnlineBtn = document.getElementById('start-online-btn');
 const joinRoomBtn = document.getElementById('join-room-btn');
 const cancelOnlineBtn = document.getElementById('cancel-online-btn');
 const lobbyRoster = document.getElementById('lobby-roster');
+const aiTestBtn = document.getElementById('ai-test-btn');
+const aiTestPanel = document.getElementById('ai-test-panel');
+const aiTestStatus = document.getElementById('ai-test-status');
+const aiTestOutput = document.getElementById('ai-test-output');
+const aiTestScenarios = document.getElementById('ai-test-scenarios');
+const runAiTestsBtn = document.getElementById('run-ai-tests-btn');
+const closeAiTestsBtn = document.getElementById('close-ai-tests-btn');
 const hostPanel = document.getElementById('host-panel');
 const hostPanelKicker = hostPanel.querySelector('.host-panel-kicker');
 const hostPanelTitle = document.getElementById('host-panel-title');
@@ -149,6 +156,9 @@ async function ensureAssets() {
 startBtn.addEventListener('click', showLocalPanel);
 startLocalBtn.addEventListener('click', startLocalMatch);
 cancelLocalBtn.addEventListener('click', closeLocalPanel);
+aiTestBtn.addEventListener('click', showAiTestPanel);
+runAiTestsBtn.addEventListener('click', runAiTests);
+closeAiTestsBtn.addEventListener('click', closeAiTestPanel);
 hostBtn.addEventListener('click', startHostFlow);
 joinBtn.addEventListener('click', showJoinPanel);
 copyPrimaryBtn.addEventListener('click', () => copyCode(primaryCode, 'Room copied'));
@@ -183,10 +193,141 @@ primaryCode.addEventListener('keydown', (event) => {
 function showLocalPanel() {
   closeOnlineSession();
   resetOnlinePanel();
+  closeAiTestPanel();
   localHeroSelections[0] = normalizeHero(selectedHero);
   localPanel.classList.remove('hidden');
   heroPick.classList.add('hidden');
   renderLocalRoster();
+}
+
+let aiSimModule = null;
+async function loadAiSimModule() {
+  if (!aiSimModule) aiSimModule = await import('../ai-sim-test.mjs');
+  return aiSimModule;
+}
+
+async function showAiTestPanel() {
+  closeLocalPanel();
+  closeOnlineSession();
+  resetOnlinePanel();
+  aiTestPanel.classList.remove('hidden');
+  aiTestPanel.scrollIntoView({ block: 'nearest' });
+
+  if (!aiTestScenarios.childElementCount) {
+    try {
+      const { SCENARIOS } = await loadAiSimModule();
+      renderAiScenarioList(SCENARIOS);
+    } catch (err) {
+      aiTestStatus.textContent = 'Failed to load scenarios';
+      console.error(err);
+    }
+  }
+}
+
+function closeAiTestPanel() {
+  aiTestPanel.classList.add('hidden');
+}
+
+function renderAiScenarioList(scenarios) {
+  aiTestScenarios.replaceChildren();
+  for (const scenario of scenarios) {
+    const row = document.createElement('div');
+    row.className = 'ai-scenario-row';
+
+    const name = document.createElement('span');
+    name.className = 'ai-scenario-name';
+    name.textContent = scenario.label;
+
+    const watch = document.createElement('button');
+    watch.type = 'button';
+    watch.className = 'tiny-btn';
+    watch.textContent = 'Watch';
+    watch.addEventListener('click', () => {
+      watchAiScenario(scenario).catch((err) => {
+        aiTestStatus.textContent = 'Failed to start match';
+        console.error(err);
+      });
+    });
+
+    row.appendChild(name);
+    row.appendChild(watch);
+    aiTestScenarios.appendChild(row);
+  }
+}
+
+async function watchAiScenario(scenario) {
+  closeOnlineSession();
+  resetOnlinePanel();
+
+  try {
+    await ensureAssets();
+  } catch (err) {
+    loading.textContent = 'Failed to load assets - serve this folder over HTTP.';
+    console.error(err);
+    return;
+  }
+
+  const heroCounts = {};
+  const players = scenario.specs.map((spec) => {
+    const hero = normalizeHero(spec.heroKind);
+    const count = (heroCounts[hero] = (heroCounts[hero] ?? 0) + 1);
+    return {
+      nickname: `AI ${heroName(hero)}${count > 1 ? ` ${count}` : ''}`,
+      heroKind: hero,
+      team: normalizeTeam(spec.team),
+      spawnX: spec.x,
+      spawnZ: spec.z,
+      control: 'ai',
+    };
+  });
+
+  const matchSettings = defaultMatchSettings();
+  localMatchState = { started: true, players, matchSettings };
+
+  setIntentOverlay(true);
+  closeAiTestPanel();
+  enterGameView();
+  game?.dispose();
+  game = new Game({
+    scene,
+    camera,
+    assets,
+    hud,
+    scoreboard,
+    playerSpecs: players,
+    localPlayerIndex: 0,
+    timeLimitSeconds: matchSettings.timeLimitSeconds,
+    scoreLimit: matchSettings.scoreLimit,
+  });
+  installEditableMatchEndHandler();
+}
+
+let aiTestsRunning = false;
+async function runAiTests() {
+  if (aiTestsRunning) return;
+  aiTestsRunning = true;
+  runAiTestsBtn.disabled = true;
+  aiTestOutput.textContent = '';
+  aiTestStatus.textContent = 'Loading...';
+
+  try {
+    const { runAllScenarios } = await loadAiSimModule();
+    const started = performance.now();
+    const report = await runAllScenarios(async (done, total, label) => {
+      aiTestStatus.textContent = label ? `Running ${done + 1}/${total}: ${label}` : 'Finishing...';
+      await new Promise((resolve) => setTimeout(resolve));
+    });
+    const elapsed = ((performance.now() - started) / 1000).toFixed(1);
+    aiTestOutput.textContent = report;
+    aiTestStatus.textContent = `Done in ${elapsed}s`;
+  } catch (err) {
+    aiTestOutput.textContent = String(err?.stack || err);
+    aiTestStatus.textContent = 'Failed';
+    console.error(err);
+  } finally {
+    aiTestsRunning = false;
+    runAiTestsBtn.disabled = false;
+  }
 }
 
 function closeLocalPanel() {
@@ -236,6 +377,7 @@ async function startLocalMatch() {
 
 async function startHostFlow() {
   closeLocalPanel();
+  closeAiTestPanel();
   if (!ensureWebRtcAvailable()) return;
 
   closeOnlineSession();
@@ -255,6 +397,7 @@ async function startHostFlow() {
 
 function showJoinPanel() {
   closeLocalPanel();
+  closeAiTestPanel();
   if (!ensureWebRtcAvailable()) return;
 
   closeOnlineSession();

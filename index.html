@@ -90,6 +90,18 @@
     <button id="host-btn" class="secondary-btn">Host Online</button>
     <button id="join-btn" class="secondary-btn">Join Online</button>
   </div>
+  <div id="ai-test-panel" class="hidden">
+    <div class="online-header">
+      <strong id="ai-test-title">AI Sim Tests</strong>
+      <span id="ai-test-status">Idle</span>
+    </div>
+    <div id="ai-test-scenarios"></div>
+    <pre id="ai-test-output">Watch runs a scenario live in the stadium with every player AI-controlled. Run All simulates them headless and prints score, action distribution and kick/power counts per player.</pre>
+    <div class="online-actions">
+      <button id="run-ai-tests-btn" class="tiny-btn">Run All (headless)</button>
+      <button id="close-ai-tests-btn" class="tiny-btn danger-btn">Close</button>
+    </div>
+  </div>
   <div id="local-panel" class="hidden">
     <div class="online-header">
       <strong id="local-title">Local Match</strong>
@@ -150,6 +162,7 @@
     </div>
   </div>
   <p class="controls-hint">WASD / Arrows to move &nbsp;&middot;&nbsp; Space to shoot &nbsp;&middot;&nbsp; Shift for power</p>
+  <button id="ai-test-btn" class="debug-link" type="button">AI sim tests</button>
 </div>
 
 <div id="loading" class="hidden">Loading stadium...</div>

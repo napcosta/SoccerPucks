@@ -46,6 +46,10 @@ function setDebugToggle(key, value) {
   if (input) input.checked = DEBUG[key];
 }
 
+export function setIntentOverlay(enabled) {
+  setDebugToggle('intentOverlay', enabled);
+}
+
 function buildTuningSliders(panel) {
   const section = document.createElement('div');
   section.id = 'debug-tuning';

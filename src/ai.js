@@ -1,28 +1,93 @@
 import { PITCH } from './constants.js';
+import { TUNING } from './tuning.js';
 
-const INTENT = Object.freeze({
-  ATTACK: 'attackBall',
-  SUPPORT: 'supportAttack',
-  GUARD: 'guardGoal',
+const ROLE = Object.freeze({
+  STRIKER: 'striker',
+  SUPPORT: 'support',
+  DEFENDER: 'defender',
+  MARKER: 'marker',
+});
+
+const INTENT_FOR_ROLE = Object.freeze({
+  [ROLE.STRIKER]: 'attackBall',
+  [ROLE.SUPPORT]: 'supportAttack',
+  [ROLE.DEFENDER]: 'guardGoal',
+  [ROLE.MARKER]: 'guardGoal',
 });
 
 const AI = Object.freeze({
-  ballLeadTime: 0.22,
-  switchMargin: 0.14,
-  minIntentAge: 0.4,
-  attackStandoff: 0.18,
-  supportWidth: 3.2,
-  supportDepth: 2.6,
-  guardHomeDepth: 3.2,
-  guardDangerLeadTime: 0.34,
-  guardLaneWidth: PITCH.goalHalfWidth + 1.2,
-  possessionRange: 0.24,
-  passMinScore: 0.54,
-  passMaxDistance: 8.5,
-  passLaneRadius: 1.05,
-  passAheadDepth: 3.2,
-  carryLead: 2.2,
+  interceptHorizon: 2.6,
+  interceptIterations: 6,
+  cruiseFactor: 0.92,
+  strikerHysteresis: 0.35,
+  aiTieBreak: 0.1,
+  wrongSidePenalty: 0.45,
+  possessionRange: 0.26,
+  orbitRadius: 1.35,
+  attackStandoff: 0.16,
+  dribbleLead: 1.2,
+  carryVeerRange: 4,
+  carryVeerMax: 0.7,
+  alignMin: 0.05,
+  contestedAlign: -0.2,
+  contestedRange: 1.35,
+  shotMaxRange: 10.0,
+  shotCloseRange: 6.0,
+  shotLaneClear: 0.7,
+  shotMinScore: 0.52,
+  shotCloseMinScore: 0.15,
+  shotScrappyScore: 0.05,
+  passMinScore: 0.42,
+  passGreatScore: 0.62,
+  passMinDistance: 2.1,
+  passMaxDistance: 10.5,
+  passLaneRadius: 1.0,
+  passPlanExtra: 0.4,
+  pressureDist: 2.0,
+  maxHoldTime: 2.4,
+  backOffTime: 5.0,
+  defensiveThird: 0.4,
+  supportMinBallDist: 3.2,
+  supportSwitchBonus: 0.09,
+  guardMinDist: 2.0,
+  guardMaxDist: 6.2,
+  markGoalSide: 1.25,
+  stepUpMargin: 0.18,
+  dangerDefend: 0.52,
+  dashMinSpeed: 2.1,
+  dashHeadingMin: 0.72,
+  magnetGrabRange: 2.6,
+  magnetContestRange: 3.0,
 });
+
+export function createTeamAIState() {
+  return {
+    tick: -1,
+    time: 0,
+    roles: new Map(),
+    passPlan: null,
+    carrier: null,
+    stallRef: null,
+    ballStalled: false,
+    ballStalledLong: false,
+    teamHasBall: false,
+    oppHasBall: false,
+    danger: 0,
+  };
+}
+
+export function resetTeamAIState(state) {
+  if (!state) return;
+  state.roles = new Map();
+  state.passPlan = null;
+  state.carrier = null;
+  state.stallRef = null;
+  state.ballStalled = false;
+  state.ballStalledLong = false;
+  state.teamHasBall = false;
+  state.oppHasBall = false;
+  state.danger = 0;
+}
 
 export function computeAICommands(player, ball, contextOrDefendZSign = {}) {
   const context =
@@ -31,368 +96,778 @@ export function computeAICommands(player, ball, contextOrDefendZSign = {}) {
       : contextOrDefendZSign;
   const defendZSign = nonZeroSign(context.defendZSign ?? player.spawnZ);
   const attackZSign = -defendZSign;
-  const players = Array.isArray(context.players) ? context.players : [player];
+  const players =
+    Array.isArray(context.players) && context.players.length > 0 ? context.players : [player];
   const dt = Number(context.dt) || 1 / 60;
 
-  const beliefs = buildBeliefs(player, ball, players, defendZSign, attackZSign);
-  const scores = scoreIntentions(beliefs);
-  const intent = chooseIntent(player, scores, dt);
-  const shot = shotOpportunity(player, ball, beliefs);
-  const action = choosePossessionAction(player, shot, beliefs, intent);
-  const target = targetForIntent(intent, player, ball, beliefs, action);
-  const move = steerToward(player.body, target);
+  if (!player.ai) player.ai = {};
 
-  player.ai.targetX = target.x;
-  player.ai.targetZ = target.z;
-  player.ai.action = action.name;
+  const teamState = context.teamState ?? fallbackTeamState(player);
+  const tick = Number.isFinite(context.tick) ? context.tick : teamState.tick + 1;
+
+  const teammates = players.filter((p) => p.team === player.team);
+  const opponents = players.filter((p) => p.team !== player.team);
+
+  if (teamState.tick !== tick) {
+    teamState.tick = tick;
+    updateTeamState(teamState, teammates, opponents, ball, defendZSign, attackZSign, dt);
+  }
+
+  const world = buildWorld(player, ball, teammates, opponents, teamState, defendZSign, attackZSign);
+  const decision = decide(player, world);
+
+  player.ai.intent = INTENT_FOR_ROLE[world.role] ?? 'attackBall';
+  player.ai.action = decision.name;
+  player.ai.targetX = decision.target?.x ?? player.body.x;
+  player.ai.targetZ = decision.target?.z ?? player.body.z;
+
+  const move = decision.move ?? steerToward(player.body, decision.target ?? player.body);
+
+  player.ai.shootCooldown = Math.max(0, (player.ai.shootCooldown ?? 0) - dt);
+  player.ai.pokeCooldown = Math.max(0, (player.ai.pokeCooldown ?? 0) - dt);
+  let shoot = Boolean(decision.shoot);
+  if (shoot) {
+    if (player.ai.shootCooldown > 0) shoot = false;
+    else player.ai.shootCooldown = 0.22;
+  }
 
   return {
     moveX: move.x,
     moveZ: move.z,
-    shoot: action.shoot,
-    kickX: action.kickX,
-    kickZ: action.kickZ,
-    kickMultiplier: action.kickMultiplier,
-    power: shouldUsePower(player, intent, shot, beliefs, action),
+    shoot,
+    kickX: decision.kickX ?? 0,
+    kickZ: decision.kickZ ?? 0,
+    kickMultiplier: decision.kickMultiplier ?? 1,
+    power: shouldUsePower(player, world, decision),
   };
 }
 
-function buildBeliefs(player, ball, players, defendZSign, attackZSign) {
-  const predictedBall = predictBall(ball, AI.ballLeadTime);
-  const teammates = players.filter((p) => p.team === player.team);
-  const opponents = players.filter((p) => p.team !== player.team);
-  const teammateRankings = teammates
-    .map((p) => ({ player: p, cost: attackClaimCost(p, predictedBall, attackZSign) }))
-    .sort((a, b) => a.cost - b.cost);
-  const bestAttacker = teammateRankings[0]?.player ?? player;
-  const playerHasBall = hasPossession(player, ball);
-  const teamCarrier = teammates.find((p) => hasPossession(p, ball)) ?? null;
-  const bestPass = bestPassOption(player, ball, teammates, opponents, attackZSign);
+function updateTeamState(state, teammates, opponents, ball, defendZSign, attackZSign, dt) {
+  state.time += dt;
+
+  if (state.passPlan) {
+    const plan = state.passPlan;
+    const receiverGone = !teammates.includes(plan.receiver);
+    const arrived = !receiverGone && hasPossession(plan.receiver, ball);
+    const stolen = opponents.some((opponent) => hasPossession(opponent, ball));
+    if (receiverGone || arrived || stolen || state.time > plan.expires) state.passPlan = null;
+  }
+
+  const carrier = findCarrier(teammates, opponents, ball);
+  const oppHasBall = Boolean(carrier && opponents.includes(carrier));
+  const teamHasBall = Boolean(carrier && !oppHasBall);
+  const danger = computeDanger(ball, defendZSign);
+
+  const ref = state.stallRef;
+  if (!ref || Math.hypot(ball.x - ref.x, ball.z - ref.z) > 1.4) {
+    state.stallRef = { x: ball.x, z: ball.z, since: state.time };
+    state.ballStalled = false;
+    state.ballStalledLong = false;
+  } else if (!carrier) {
+    ref.since = state.time;
+    state.ballStalled = false;
+    state.ballStalledLong = false;
+  } else {
+    const elapsed = state.time - ref.since;
+    state.ballStalled = elapsed > AI.maxHoldTime;
+    state.ballStalledLong = elapsed > AI.backOffTime;
+  }
+
+  let striker = null;
+  if (state.passPlan && teammates.includes(state.passPlan.receiver)) {
+    striker = state.passPlan.receiver;
+  } else {
+    let bestCost = Infinity;
+    for (const teammate of teammates) {
+      const intercept = interceptBall(teammate.body, ball);
+      let cost = intercept.time;
+      if ((ball.z - teammate.body.z) * attackZSign < -0.2) cost += AI.wrongSidePenalty;
+      if (teammate.control === 'ai') cost += AI.aiTieBreak;
+      if (state.roles.get(teammate)?.role === ROLE.STRIKER) cost -= AI.strikerHysteresis;
+      if (cost < bestCost) {
+        bestCost = cost;
+        striker = teammate;
+      }
+    }
+  }
 
   const ownGoalZ = PITCH.halfLength * defendZSign;
-  const opponentGoalZ = PITCH.halfLength * attackZSign;
-  const ballHeadingToOwnGoal =
-    Math.sign(ball.vz) === defendZSign && Math.abs(ball.vz) > 0.45;
-  const ownHalfDepth = clamp((ball.z * defendZSign) / (PITCH.halfLength * 0.85), 0, 1);
-  const dangerLane = clamp(1 - Math.abs(ball.x) / AI.guardLaneWidth, 0, 1);
-  const dangerSpeed = ballHeadingToOwnGoal ? clamp(Math.abs(ball.vz) / 10, 0, 1) : 0;
-  const danger = clamp(ownHalfDepth * 0.62 + dangerLane * 0.18 + dangerSpeed * 0.35, 0, 1);
+  const others = teammates
+    .filter((teammate) => teammate !== striker)
+    .sort((a, b) => distanceTo(a.body, 0, ownGoalZ) - distanceTo(b.body, 0, ownGoalZ));
 
-  const ballDist = Math.hypot(ball.x - player.body.x, ball.z - player.body.z);
-  const attackingHalf = clamp((ball.z * attackZSign) / PITCH.halfLength, 0, 1);
-  const isBestAttacker = bestAttacker === player;
-  const hasTeammate = teammates.length > 1;
+  const defending =
+    oppHasBall || danger > AI.dangerDefend || (!teamHasBall && ball.z * defendZSign > 0.5);
+
+  const roles = new Map();
+  if (striker) roles.set(striker, { role: ROLE.STRIKER });
+  others.forEach((teammate, index) => {
+    let role = ROLE.SUPPORT;
+    if (defending) role = index === 0 ? ROLE.DEFENDER : ROLE.MARKER;
+    else if (others.length >= 2 && index === 0) role = ROLE.DEFENDER;
+    roles.set(teammate, { role });
+  });
+
+  state.roles = roles;
+  state.carrier = carrier;
+  state.teamHasBall = teamHasBall;
+  state.oppHasBall = oppHasBall;
+  state.danger = danger;
+}
+
+function buildWorld(player, ball, teammates, opponents, teamState, defendZSign, attackZSign) {
+  const myIntercept = interceptBall(player.body, ball);
+  let oppInterceptTime = Infinity;
+  let nearestOppToBall = Infinity;
+  let pressure = Infinity;
+  for (const opponent of opponents) {
+    oppInterceptTime = Math.min(oppInterceptTime, interceptBall(opponent.body, ball).time);
+    nearestOppToBall = Math.min(nearestOppToBall, distanceTo(opponent.body, ball.x, ball.z));
+    pressure = Math.min(pressure, distanceTo(opponent.body, player.body.x, player.body.z));
+  }
 
   return {
     player,
     ball,
-    predictedBall,
     teammates,
     opponents,
-    bestAttacker,
-    teamCarrier,
-    bestPass,
-    isBestAttacker,
-    hasTeammate,
-    playerHasBall,
+    teamState,
     defendZSign,
     attackZSign,
-    ownGoalZ,
-    opponentGoalZ,
-    ballHeadingToOwnGoal,
-    danger,
-    ballDist,
-    attackingHalf,
+    ownGoalZ: PITCH.halfLength * defendZSign,
+    opponentGoalZ: PITCH.halfLength * attackZSign,
+    role: teamState.roles.get(player)?.role ?? ROLE.STRIKER,
+    hasBall: hasPossession(player, ball),
+    carrier: teamState.carrier ?? null,
+    stalled: Boolean(teamState.ballStalled),
+    stalledLong: Boolean(teamState.ballStalledLong),
+    teamHasBall: Boolean(teamState.teamHasBall),
+    oppHasBall: Boolean(teamState.oppHasBall),
+    danger: teamState.danger ?? 0,
+    myIntercept,
+    oppInterceptTime,
+    nearestOppToBall,
+    pressure,
+    ballDist: distanceTo(player.body, ball.x, ball.z),
+    attackingHalf: clamp((ball.z * attackZSign) / PITCH.halfLength, 0, 1),
   };
 }
 
-function scoreIntentions(beliefs) {
-  const closeToBall = clamp(1 - beliefs.ballDist / 6, 0, 1);
-  const attack = clamp(
-    (beliefs.isBestAttacker ? 0.72 : 0.16) +
-      closeToBall * 0.28 +
-      (!beliefs.hasTeammate ? 0.2 : 0) -
-      beliefs.danger * (beliefs.hasTeammate ? 0.18 : 0.08),
-    0,
-    1
-  );
-  const support = clamp(
-    (beliefs.hasTeammate && !beliefs.isBestAttacker ? 0.58 : 0.06) +
-      beliefs.attackingHalf * 0.16 -
-      beliefs.danger * 0.42,
-    0,
-    1
-  );
-  const guard = clamp(
-    beliefs.danger * 0.86 +
-      (beliefs.hasTeammate && !beliefs.isBestAttacker ? 0.22 : 0) -
-      closeToBall * 0.08,
-    0,
-    1
-  );
-
-  return {
-    [INTENT.ATTACK]: attack,
-    [INTENT.SUPPORT]: support,
-    [INTENT.GUARD]: guard,
-  };
+function decide(player, world) {
+  const stolen =
+    world.carrier && world.carrier !== player && Boolean(world.carrier.hero?.captured);
+  const teammateOnBall =
+    world.carrier && world.carrier !== player && world.teammates.includes(world.carrier);
+  if (world.hasBall && !stolen && !teammateOnBall) return possessionDecision(player, world);
+  if (world.role === ROLE.STRIKER) return strikerDecision(player, world);
+  if (world.role === ROLE.SUPPORT) return supportDecision(player, world);
+  if (world.role === ROLE.MARKER) return markerDecision(player, world);
+  return defenderDecision(player, world);
 }
 
-function chooseIntent(player, scores, dt) {
-  if (!player.ai) {
-    player.ai = { intent: INTENT.ATTACK, intentAge: 0, intentScore: 0 };
+function strikerDecision(player, world) {
+  const emergency = emergencyDecision(player, world);
+  if (emergency) return emergency;
+
+  if (world.teamState.passPlan?.receiver === player) {
+    const point = clampToPitch(world.myIntercept);
+    return { name: 'receivePass', target: point, move: steerToward(player.body, point) };
   }
 
-  player.ai.intentAge = (player.ai.intentAge ?? 0) + dt;
-
-  const current = player.ai.intent ?? INTENT.ATTACK;
-  const currentScore = scores[current] ?? 0;
-  const [bestIntent, bestScore] = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
-  const canSwitch =
-    bestIntent !== current &&
-    (player.ai.intentAge >= AI.minIntentAge || currentScore < 0.08) &&
-    bestScore > currentScore + AI.switchMargin;
-
-  if (canSwitch) {
-    player.ai.intent = bestIntent;
-    player.ai.intentAge = 0;
-    player.ai.intentScore = bestScore;
-  } else {
-    player.ai.intent = current;
-    player.ai.intentScore = currentScore;
+  const ballSpeed = Math.hypot(world.ball.vx, world.ball.vz);
+  if (!world.oppHasBall && world.ballDist < 1.9 && ballSpeed < 3) {
+    return possessionDecision(player, world);
   }
 
-  return player.ai.intent;
+  return chaseDecision(player, world, world.oppHasBall ? 'pressBall' : 'chaseBall');
 }
 
-function targetForIntent(intent, player, ball, beliefs, action = { name: intent }) {
-  if (action.name === 'carryBall') return carryTarget(player, ball, beliefs);
-  if (action.name === 'passBall' || action.name === 'shootGoal') {
-    return attackTarget(player, ball, beliefs);
-  }
-  if (intent === INTENT.SUPPORT) return supportTarget(player, ball, beliefs);
-  if (intent === INTENT.GUARD) return guardTarget(player, ball, beliefs);
-  return attackTarget(player, ball, beliefs);
-}
-
-function attackTarget(player, ball, beliefs) {
-  const predicted = beliefs.predictedBall;
-  const goalVector = normalize(0 - predicted.x, beliefs.opponentGoalZ - predicted.z);
-  const standoff = player.body.radius + ball.radius + AI.attackStandoff;
-  return clampToPitch({
-    x: predicted.x - goalVector.x * standoff,
-    z: predicted.z - goalVector.z * standoff,
-  });
-}
-
-function supportTarget(player, ball, beliefs) {
-  if (beliefs.teamCarrier && beliefs.teamCarrier !== player) {
-    return receiveTargetFor(player, beliefs.teamCarrier, ball, beliefs.attackZSign, beliefs.opponents);
-  }
-
-  const side = supportSide(player, beliefs);
-  const targetX = ball.x + side * AI.supportWidth;
-  const targetZ = ball.z + beliefs.attackZSign * AI.supportDepth;
-  return clampToPitch({
-    x: targetX,
-    z: targetZ,
-  });
-}
-
-function carryTarget(player, ball, beliefs) {
-  return clampToPitch({
-    x: ball.x * 0.62,
-    z: ball.z + beliefs.attackZSign * AI.carryLead,
-  });
-}
-
-function guardTarget(player, ball, beliefs) {
-  if (beliefs.danger > 0.48 || beliefs.ballHeadingToOwnGoal) {
-    const predicted = predictBall(ball, AI.guardDangerLeadTime);
-    return clampToPitch({
-      x: predicted.x,
-      z: clampSignedZ(predicted.z + beliefs.defendZSign * 0.35, beliefs.defendZSign, 1.6, PITCH.halfLength - 1.15),
+function chaseDecision(player, world, name) {
+  if (world.oppHasBall && world.carrier) {
+    const carrier = world.carrier.body;
+    const toGoal = normalize(0 - carrier.x, world.ownGoalZ - carrier.z);
+    const lead = clamp(distanceTo(player.body, carrier.x, carrier.z) * 0.5, 0.9, 2.4);
+    const block = clampToPitch({
+      x: carrier.x + toGoal.x * lead,
+      z: carrier.z + toGoal.z * lead,
     });
+    return { name, target: block, move: steerToward(player.body, block) };
   }
 
-  return clampToPitch({
-    x: ball.x * 0.55 + supportSide(player, beliefs) * 0.55,
-    z: beliefs.defendZSign * (PITCH.halfLength - AI.guardHomeDepth),
+  const intercept = world.myIntercept;
+  const goalDir = normalize(0 - intercept.x, world.opponentGoalZ - intercept.z);
+  const standoff = player.body.radius + world.ball.radius + AI.attackStandoff;
+  const target = clampToPitch({
+    x: intercept.x - goalDir.x * standoff,
+    z: intercept.z - goalDir.z * standoff,
   });
+  return { name, target, move: approachAroundBall(player, world.ball, target) };
 }
 
-function shotOpportunity(player, ball, beliefs) {
-  const toGoal = normalize(0 - ball.x, beliefs.opponentGoalZ - ball.z);
-  const playerToBallX = ball.x - player.body.x;
-  const playerToBallZ = ball.z - player.body.z;
-  const playerToBallLen = Math.hypot(playerToBallX, playerToBallZ) || 1;
-  const alignment = (playerToBallX * toGoal.x + playerToBallZ * toGoal.z) / playerToBallLen;
-  const touching = playerToBallLen <= player.body.radius + ball.radius + 0.3;
-  const centralLane = clamp(1 - Math.abs(ball.x) / (PITCH.goalHalfWidth + 2.0), 0, 1);
-  const confidence = clamp(alignment * 0.72 + centralLane * 0.28, 0, 1);
+function possessionDecision(player, world) {
+  const inDefensiveThird = world.ball.z * world.defendZSign > PITCH.halfLength * AI.defensiveThird;
 
-  return {
-    touching,
-    alignment,
-    confidence,
-  };
-}
-
-function choosePossessionAction(player, shot, beliefs, intent) {
-  if (!beliefs.playerHasBall) return passiveAction(intent);
-
-  const canShoot =
-    shot.touching &&
-    (shot.confidence > 0.76 || (beliefs.attackingHalf > 0.48 && shot.confidence > 0.44));
-  const pass = beliefs.bestPass;
-  const canPass = pass && pass.score >= AI.passMinScore;
-
-  if (canShoot && (!canPass || beliefs.attackingHalf > 0.62 || shot.confidence > pass.score + 0.16)) {
-    return kickToward(ballTargetForGoal(beliefs), beliefs.ball, 1.05, 'shootGoal');
+  if (world.stalledLong && !player.hero?.captured && !inDefensiveThird) {
+    const spot = clampToPitch({
+      x: world.ball.x * 0.4,
+      z: world.ball.z + world.defendZSign * 3.2,
+    });
+    return { name: 'backOff', target: spot, move: steerToward(player.body, spot) };
   }
 
-  if (canPass) {
-    return kickToward(pass.target, beliefs.ball, 0.72, 'passBall');
+  const shot = bestShot(world);
+  const pass = bestPassOption(player, world);
+  const pressured = world.pressure < AI.pressureDist;
+  const stalled = world.stalled;
+
+  const shotReady =
+    shot &&
+    (shot.score > AI.shotMinScore ||
+      (shot.distToGoal < AI.shotCloseRange && shot.score > AI.shotCloseMinScore) ||
+      (stalled && world.attackingHalf > 0.5 && shot.score > AI.shotScrappyScore));
+  const passReady = pass && pass.score >= AI.passMinScore;
+
+  if (shotReady && (!passReady || shot.score > pass.score - 0.15 || world.attackingHalf > 0.55)) {
+    return kickAction(player, world, shot.target, 1.05, 'shootGoal');
   }
 
-  if (canShoot && beliefs.attackingHalf > 0.34) {
-    return kickToward(ballTargetForGoal(beliefs), beliefs.ball, 0.95, 'shootGoal');
+  if (
+    passReady &&
+    (pressured || stalled || pass.score > AI.passGreatScore || world.attackingHalf < 0.4)
+  ) {
+    const action = kickAction(player, world, pass.target, pass.power, 'passBall');
+    if (action.shoot && world.hasBall) {
+      world.teamState.passPlan = {
+        receiver: pass.receiver,
+        target: pass.target,
+        expires: world.teamState.time + pass.flightTime + AI.passPlanExtra,
+      };
+    }
+    return action;
   }
 
-  return passiveAction('carryBall');
-}
-
-function passiveAction(name) {
-  return {
-    name,
-    shoot: false,
-    kickX: 0,
-    kickZ: 0,
-    kickMultiplier: 1,
-  };
-}
-
-function kickToward(target, ball, kickMultiplier, name) {
-  return {
-    name,
-    shoot: true,
-    kickX: target.x - ball.x,
-    kickZ: target.z - ball.z,
-    kickMultiplier,
-  };
-}
-
-function ballTargetForGoal(beliefs) {
-  return {
-    x: clamp(beliefs.ball.x * 0.18, -PITCH.goalHalfWidth * 0.72, PITCH.goalHalfWidth * 0.72),
-    z: beliefs.opponentGoalZ + beliefs.attackZSign * 0.4,
-  };
-}
-
-function shouldUsePower(player, intent, shot, beliefs, action) {
-  const hero = player.hero;
-  if (!hero || hero.cooldownRemaining > 0) return false;
-  if (action?.name === 'passBall' || action?.name === 'shootGoal') return false;
-
-  if (player.heroKind === 'tesla') {
-    return !hero.active && beliefs.ballDist < 2.75 && intent !== INTENT.SUPPORT;
+  if (inDefensiveThird && (pressured || stalled)) {
+    return kickAction(player, world, clearanceTarget(world), 1.0, 'clearBall');
   }
 
-  return shot.touching && shot.confidence > 0.48 && intent !== INTENT.SUPPORT;
+  if (stalled && shot) {
+    return kickAction(player, world, shot.target, 1.05, 'shootGoal');
+  }
+
+  return carryDecision(player, world);
 }
 
-function hasPossession(player, ball) {
-  const dx = ball.x - player.body.x;
-  const dz = ball.z - player.body.z;
-  const touchRange = player.body.radius + ball.radius + AI.possessionRange;
-  return player.hero?.captured || dx * dx + dz * dz <= touchRange * touchRange;
-}
+function kickAction(player, world, target, power, name) {
+  const { ball } = world;
+  const dx = target.x - ball.x;
+  const dz = target.z - ball.z;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.001) return carryDecision(player, world);
+  const kickDir = { x: dx / len, z: dz / len };
 
-function bestPassOption(player, ball, teammates, opponents, attackZSign) {
-  let best = null;
+  if (kickEndangersOwnGoal(ball, kickDir, world.defendZSign)) {
+    return carryDecision(player, world);
+  }
 
-  for (const receiver of teammates) {
-    if (receiver === player) continue;
-
-    const target = receiveTargetFor(receiver, player, ball, attackZSign, opponents);
-    const distance = Math.hypot(target.x - ball.x, target.z - ball.z);
-    if (distance < 1.4 || distance > AI.passMaxDistance) continue;
-
-    const laneClearance = passLaneClearance(ball, target, opponents);
-    const receiverSpace = nearestOpponentDistance(target, opponents);
-    const forwardGain = (target.z - ball.z) * attackZSign;
-    const laneScore = clearanceScore(laneClearance);
-    const spaceScore = clamp((receiverSpace - 0.9) / 3.8, 0, 1);
-    const forwardScore = clamp((forwardGain + 0.8) / 5.2, 0, 1);
-    const distanceScore = clamp(1 - Math.abs(distance - 4.2) / 4.6, 0, 1);
-    const score = clamp(
-      laneScore * 0.36 + spaceScore * 0.3 + forwardScore * 0.22 + distanceScore * 0.12,
-      0,
-      1
-    );
-
-    if (!best || score > best.score) {
-      best = { receiver, target, score };
+  if (!player.hero?.captured) {
+    const contested = world.nearestOppToBall < AI.contestedRange || world.stalled;
+    const alignNeeded = contested ? AI.contestedAlign : AI.alignMin;
+    const toBall = normalize(ball.x - player.body.x, ball.z - player.body.z);
+    const align = toBall.x * kickDir.x + toBall.z * kickDir.z;
+    if (align < alignNeeded) {
+      if (contested) {
+        if (player.ai.pokeCooldown > 0) {
+          return { name: 'contest', target: ball, move: steerToward(player.body, ball) };
+        }
+        const poke = pokeAction(player, world, kickDir);
+        if (poke) return poke;
+      }
+      const standoff = player.body.radius + ball.radius + AI.attackStandoff;
+      const spot = clampToPitch({
+        x: ball.x - kickDir.x * standoff,
+        z: ball.z - kickDir.z * standoff,
+      });
+      return { name: 'lineUp', target: spot, move: approachAroundBall(player, ball, spot) };
     }
   }
 
+  return {
+    name,
+    shoot: true,
+    kickX: dx,
+    kickZ: dz,
+    kickMultiplier: power,
+    target,
+    move: steerToward(player.body, ball),
+  };
+}
+
+function pokeAction(player, world, desiredDir) {
+  const { ball, opponents } = world;
+  const toBall = normalize(ball.x - player.body.x, ball.z - player.body.z);
+  const perp = { x: -toBall.z, z: toBall.x };
+  const candidates = [];
+  for (const blend of [
+    { x: toBall.x, z: toBall.z },
+    { x: toBall.x * 0.5 + perp.x * 0.87, z: toBall.z * 0.5 + perp.z * 0.87 },
+    { x: toBall.x * 0.5 - perp.x * 0.87, z: toBall.z * 0.5 - perp.z * 0.87 },
+  ]) {
+    const dir = normalize(blend.x, blend.z);
+    if (kickEndangersOwnGoal(ball, dir, world.defendZSign)) continue;
+    const landing = { x: ball.x + dir.x * 4, z: ball.z + dir.z * 4 };
+    const laneScore = clamp(passLaneClearance(ball, landing, opponents) / 3, 0, 1);
+    const wallPenalty =
+      Math.abs(landing.x) > PITCH.halfWidth - 0.6 || Math.abs(landing.z) > PITCH.halfLength - 0.6
+        ? 0.8
+        : 0;
+    const desirability =
+      dir.x * desiredDir.x +
+      dir.z * desiredDir.z +
+      dir.z * world.attackZSign * 0.6 +
+      laneScore * 1.4 -
+      wallPenalty;
+    candidates.push({ dir, desirability });
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.desirability - a.desirability);
+  const dir = candidates[0].dir;
+  player.ai.pokeCooldown = 0.9;
+  return {
+    name: 'pokeBall',
+    shoot: true,
+    kickX: dir.x,
+    kickZ: dir.z,
+    kickMultiplier: 1.0,
+    target: clampToPitch({ x: ball.x + dir.x * 4, z: ball.z + dir.z * 4 }),
+    move: steerToward(player.body, ball),
+  };
+}
+
+function bestShot(world) {
+  const { ball } = world;
+  const distToGoal = Math.hypot(ball.x, world.opponentGoalZ - ball.z);
+  if (distToGoal > AI.shotMaxRange) return null;
+
+  let best = null;
+  for (const fraction of [-0.62, 0, 0.62]) {
+    const target = {
+      x: fraction * PITCH.goalHalfWidth,
+      z: world.opponentGoalZ + world.attackZSign * 0.4,
+    };
+    const lane = passLaneClearance(ball, target, world.opponents);
+    const laneScore = clamp((lane - AI.shotLaneClear) / 2.2, 0, 1);
+    const rangeScore = clamp(1 - distToGoal / AI.shotMaxRange, 0, 1);
+    const score = laneScore * 0.7 + rangeScore * 0.3;
+    if (!best || score > best.score) best = { target, score, distToGoal };
+  }
   return best;
 }
 
-function receiveTargetFor(receiver, carrier, ball, attackZSign, opponents = []) {
-  const preferredSide = preferredReceiveSide(receiver, carrier);
-  const carrierZ = carrier?.body?.z ?? ball.z;
-  const forwardZ = furtherAhead(
-    ball.z + attackZSign * AI.passAheadDepth,
-    carrierZ + attackZSign * (AI.supportDepth * 0.72),
-    attackZSign
-  );
-
-  const candidates = [preferredSide, -preferredSide].map((side, index) => {
-    const point = clampToPitch({
-      x: ball.x * 0.28 + side * AI.supportWidth,
-      z: forwardZ,
-    });
-    const lane = clearanceScore(passLaneClearance(ball, point, opponents));
-    const space = clamp((nearestOpponentDistance(point, opponents) - 0.9) / 3.8, 0, 1);
-    const preference = index === 0 ? 0.08 : 0;
-    return {
-      point,
-      score: lane * 0.44 + space * 0.48 + preference,
-    };
-  });
-
-  return candidates.sort((a, b) => b.score - a.score)[0].point;
+function bestPassOption(player, world) {
+  let best = null;
+  for (const receiver of world.teammates) {
+    if (receiver === player) continue;
+    const option = evaluatePass(receiver, world);
+    if (option && (!best || option.score > best.score)) best = option;
+  }
+  return best;
 }
 
-function preferredReceiveSide(receiver, carrier) {
-  if (Math.abs(receiver.spawnX) > 0.1) return Math.sign(receiver.spawnX);
+function evaluatePass(receiver, world) {
+  const { ball, opponents, attackZSign } = world;
 
-  const carrierX = carrier?.body?.x ?? 0;
-  const dx = receiver.body.x - carrierX;
-  if (Math.abs(dx) > 0.2) return Math.sign(dx);
-  if (Math.abs(receiver.body.x) > 0.1) return Math.sign(receiver.body.x);
-  return 1;
+  let target = { x: receiver.body.x, z: receiver.body.z };
+  let power = 0.7;
+  let flightTime = 0;
+  for (let i = 0; i < 3; i++) {
+    const reach = Math.hypot(target.x - ball.x, target.z - ball.z);
+    if (reach < AI.passMinDistance || reach > AI.passMaxDistance) return null;
+    power = clamp(0.45 + reach / 10, 0.55, 1);
+    flightTime = passFlightTime(reach, TUNING.player.shootVelocity * power);
+    if (!Number.isFinite(flightTime)) {
+      power = 1;
+      flightTime = passFlightTime(reach, TUNING.player.shootVelocity);
+      if (!Number.isFinite(flightTime)) return null;
+    }
+    target = clampToPitch({
+      x: receiver.body.x + receiver.body.vx * flightTime * 0.6,
+      z:
+        receiver.body.z +
+        receiver.body.vz * flightTime * 0.6 +
+        attackZSign * Math.min(1.6, flightTime * 2.2),
+    });
+  }
+
+  const distance = Math.hypot(target.x - ball.x, target.z - ball.z);
+  if (distance < AI.passMinDistance || distance > AI.passMaxDistance) return null;
+
+  const laneScore = clearanceScore(passLaneClearance(ball, target, opponents));
+  const spaceScore = clamp((nearestOpponentDistance(target, opponents) - 1) / 3.6, 0, 1);
+  const forwardScore = clamp(((target.z - ball.z) * attackZSign + 1.2) / 6, 0, 1);
+  const distanceScore = clamp(1 - Math.abs(distance - 4.5) / 5, 0, 1);
+  const score = clamp(
+    laneScore * 0.4 + spaceScore * 0.26 + forwardScore * 0.22 + distanceScore * 0.12,
+    0,
+    1
+  );
+  return { receiver, target, score, power, flightTime };
+}
+
+function clearanceTarget(world) {
+  const { ball, opponents, attackZSign } = world;
+  let best = null;
+  let bestLane = -Infinity;
+  for (const side of [-1, 1]) {
+    const target = clampToPitch({
+      x: side * (PITCH.halfWidth - 1.6),
+      z: ball.z + attackZSign * PITCH.halfLength * 0.85,
+    });
+    const lane = passLaneClearance(ball, target, opponents);
+    if (lane > bestLane) {
+      bestLane = lane;
+      best = target;
+    }
+  }
+  return best;
+}
+
+function carryDecision(player, world) {
+  const { ball } = world;
+  const dir = carryDirection(world);
+  const body = player.body;
+  const target = clampToPitch({
+    x: ball.x + dir.x * AI.dribbleLead,
+    z: ball.z + dir.z * AI.dribbleLead,
+  });
+
+  const toTarget = normalize(target.x - body.x, target.z - body.z);
+  const toBall = normalize(ball.x - body.x, ball.z - body.z);
+  const aligned = toTarget.x * toBall.x + toTarget.z * toBall.z;
+  if (aligned < 0.1) {
+    const spot = clampToPitch({
+      x: ball.x - dir.x * (body.radius + ball.radius + AI.attackStandoff),
+      z: ball.z - dir.z * (body.radius + ball.radius + AI.attackStandoff),
+    });
+    return { name: 'carryBall', target: spot, move: approachAroundBall(player, ball, spot) };
+  }
+  return { name: 'carryBall', target, move: steerToward(body, target) };
+}
+
+function carryDirection(world) {
+  const { ball, opponents, attackZSign } = world;
+  const goalDir = normalize(0 - ball.x, world.opponentGoalZ - ball.z);
+  const opponent = nearestOpponentTo(ball.x, ball.z, opponents);
+  if (!opponent) return goalDir;
+
+  const oppDist = distanceTo(opponent.body, ball.x, ball.z);
+  const weight = clamp(1 - oppDist / AI.carryVeerRange, 0, 1) * AI.carryVeerMax;
+  if (weight <= 0) return goalDir;
+
+  const away = normalize(ball.x - opponent.body.x, ball.z - opponent.body.z);
+  let dir = normalize(
+    goalDir.x * (1 - weight) + away.x * weight,
+    goalDir.z * (1 - weight) + away.z * weight
+  );
+  if (dir.z * attackZSign < -0.2) {
+    const sideX = dir.x !== 0 ? Math.sign(dir.x) : ball.x >= 0 ? -1 : 1;
+    dir = normalize(sideX, attackZSign * 0.35);
+  }
+  return dir;
+}
+
+function supportDecision(player, world) {
+  const target = chooseSupportTarget(player, world);
+  return { name: 'runForSpace', target, move: steerToward(player.body, target) };
+}
+
+function chooseSupportTarget(player, world) {
+  const { ball, attackZSign } = world;
+  const side = supportSide(player, world);
+  const wideX = PITCH.halfWidth - 2;
+
+  const candidates = [
+    { x: wideX, z: ball.z + attackZSign * 3.4 },
+    { x: -wideX, z: ball.z + attackZSign * 3.4 },
+    { x: ball.x * 0.3, z: ball.z + attackZSign * 4.6 },
+    {
+      x: -Math.sign(ball.x || 1) * PITCH.goalHalfWidth * 1.9,
+      z: world.opponentGoalZ - attackZSign * 2.4,
+    },
+    { x: ball.x * 0.4 + side * 2.6, z: ball.z - attackZSign * 2.4 },
+    { x: side * 3.2, z: ball.z + attackZSign * 2.2 },
+  ].map((point) => ({ point: clampToPitch(point), bonus: 0 }));
+
+  const current = player.ai.supportTarget;
+  if (current) candidates.push({ point: clampToPitch(current), bonus: AI.supportSwitchBonus });
+
+  let best = null;
+  for (const candidate of candidates) {
+    const point = candidate.point;
+    if (Math.hypot(point.x - ball.x, point.z - ball.z) < AI.supportMinBallDist) continue;
+    const lane = clearanceScore(passLaneClearance(ball, point, world.opponents));
+    const space = clamp((nearestOpponentDistance(point, world.opponents) - 1) / 3.6, 0, 1);
+    const forward = clamp(((point.z - ball.z) * attackZSign + 2.5) / 7, 0, 1);
+    let spacing = 1;
+    for (const teammate of world.teammates) {
+      if (teammate === player) continue;
+      spacing = Math.min(spacing, clamp(distanceTo(teammate.body, point.x, point.z) / 4, 0, 1));
+    }
+    const near = clamp(1 - distanceTo(player.body, point.x, point.z) / 18, 0, 1);
+    const score =
+      lane * 0.34 + space * 0.24 + forward * 0.18 + spacing * 0.14 + near * 0.1 + candidate.bonus;
+    if (!best || score > best.score) best = { point, score };
+  }
+
+  const chosen = best?.point ?? clampToPitch({ x: player.body.x, z: player.body.z });
+  player.ai.supportTarget = { x: chosen.x, z: chosen.z };
+  return chosen;
+}
+
+function defenderDecision(player, world) {
+  const emergency = emergencyDecision(player, world);
+  if (emergency) return emergency;
+
+  if (!world.teamHasBall && world.myIntercept.time < world.oppInterceptTime - AI.stepUpMargin) {
+    return chaseDecision(player, world, 'stepUp');
+  }
+
+  const { ball } = world;
+  const dx = ball.x;
+  const dz = ball.z - world.ownGoalZ;
+  const ballToGoalDist = Math.hypot(dx, dz) || 1;
+  const toBall = { x: dx / ballToGoalDist, z: dz / ballToGoalDist };
+  const depth = clamp(
+    ballToGoalDist * (0.45 - world.danger * 0.18),
+    AI.guardMinDist,
+    AI.guardMaxDist
+  );
+  const target = clampToPitch({
+    x: toBall.x * depth,
+    z: world.ownGoalZ + toBall.z * depth,
+  });
+  return { name: 'coverGoal', target, move: steerToward(player.body, target) };
+}
+
+function markerDecision(player, world) {
+  const emergency = emergencyDecision(player, world);
+  if (emergency) return emergency;
+
+  const threat = mostAdvancedFreeOpponent(world);
+  if (!threat) return defenderDecision(player, world);
+
+  const toGoal = normalize(0 - threat.body.x, world.ownGoalZ - threat.body.z);
+  const target = clampToPitch({
+    x: threat.body.x + toGoal.x * AI.markGoalSide,
+    z: threat.body.z + toGoal.z * AI.markGoalSide,
+  });
+  return { name: 'markOpponent', target, move: steerToward(player.body, target) };
+}
+
+function emergencyDecision(player, world) {
+  const { ball } = world;
+  if (Math.sign(ball.vz) !== world.defendZSign) return null;
+  if (Math.hypot(ball.vx, ball.vz) < 3.0 || Math.abs(ball.vz) < 1.2) return null;
+
+  const t = (world.ownGoalZ - ball.z) / ball.vz;
+  if (t < 0 || t > 3.2) return null;
+  const crossX = ball.x + ball.vx * t;
+  if (Math.abs(crossX) > PITCH.goalHalfWidth + 1.2) return null;
+
+  const point = clampToPitch(world.myIntercept);
+  return { name: 'interceptShot', target: point, move: steerToward(player.body, point) };
+}
+
+function mostAdvancedFreeOpponent(world) {
+  let best = null;
+  let bestDepth = -Infinity;
+  for (const opponent of world.opponents) {
+    if (opponent === world.carrier) continue;
+    const depth = opponent.body.z * world.defendZSign;
+    if (depth > bestDepth) {
+      bestDepth = depth;
+      best = opponent;
+    }
+  }
+  return best;
+}
+
+function approachAroundBall(player, ball, target) {
+  const body = player.body;
+  const blockRadius = body.radius + ball.radius + 0.18;
+  const ballDist = distanceTo(body, ball.x, ball.z);
+  const clearance = distancePointToSegment(ball, body, target);
+  if (clearance > blockRadius || ballDist < blockRadius + 0.3) {
+    return steerToward(body, target);
+  }
+
+  const toBall = normalize(ball.x - body.x, ball.z - body.z);
+  const perp = { x: -toBall.z, z: toBall.x };
+  const toTarget = { x: target.x - ball.x, z: target.z - ball.z };
+  const side = perp.x * toTarget.x + perp.z * toTarget.z >= 0 ? 1 : -1;
+  const orbit = clampToPitch({
+    x: ball.x + perp.x * side * AI.orbitRadius - toBall.x * AI.orbitRadius * 0.25,
+    z: ball.z + perp.z * side * AI.orbitRadius - toBall.z * AI.orbitRadius * 0.25,
+  });
+  return steerToward(body, orbit);
+}
+
+function shouldUsePower(player, world, decision) {
+  const hero = player.hero;
+  if (!hero || hero.cooldownRemaining > 0) return false;
+
+  if (player.heroKind === 'tesla') {
+    if (hero.active) return false;
+    if (world.role === ROLE.SUPPORT) return false;
+    const contested = world.nearestOppToBall < AI.magnetContestRange;
+    const winnable = !world.oppHasBall || world.ballDist < 1.6;
+    return winnable && contested && world.ballDist < AI.magnetGrabRange;
+  }
+
+  const body = player.body;
+  const speed = Math.hypot(body.vx, body.vz);
+  if (speed < AI.dashMinSpeed) return false;
+  if (decision.target) {
+    const toTarget = normalize(decision.target.x - body.x, decision.target.z - body.z);
+    const heading = (body.vx * toTarget.x + body.vz * toTarget.z) / speed;
+    if (heading < AI.dashHeadingMin) return false;
+  }
+
+  if (decision.name === 'interceptShot') return true;
+  if (decision.name === 'carryBall') {
+    return world.pressure < AI.pressureDist && world.attackingHalf > 0.25;
+  }
+  if (
+    decision.name === 'chaseBall' ||
+    decision.name === 'pressBall' ||
+    decision.name === 'stepUp' ||
+    decision.name === 'receivePass'
+  ) {
+    const contested = world.oppInterceptTime < world.myIntercept.time + 0.4;
+    const winnable = world.myIntercept.time < world.oppInterceptTime + 0.6;
+    return contested && winnable && world.ballDist > 1.4;
+  }
+  return false;
+}
+
+function kickEndangersOwnGoal(ball, kickDir, defendZSign) {
+  if (kickDir.z * defendZSign <= 0.25) return false;
+  const ownGoalZ = PITCH.halfLength * defendZSign;
+  const t = (ownGoalZ - ball.z) / kickDir.z;
+  if (t <= 0) return false;
+  const crossX = ball.x + kickDir.x * t;
+  return Math.abs(crossX) < PITCH.goalHalfWidth + 1.1;
+}
+
+function hasPossession(player, ball) {
+  if (player.hero?.captured) return true;
+  const reach = player.body.radius + ball.radius + AI.possessionRange;
+  const dx = ball.x - player.body.x;
+  const dz = ball.z - player.body.z;
+  return dx * dx + dz * dz <= reach * reach;
+}
+
+function findCarrier(teammates, opponents, ball) {
+  let best = null;
+  let bestGap = AI.possessionRange;
+  for (const player of [...teammates, ...opponents]) {
+    if (player.hero?.captured) return player;
+    const gap = distanceTo(player.body, ball.x, ball.z) - (player.body.radius + ball.radius);
+    if (gap <= bestGap) {
+      bestGap = gap;
+      best = player;
+    }
+  }
+  return best;
+}
+
+function computeDanger(ball, defendZSign) {
+  const ownHalfDepth = clamp((ball.z * defendZSign) / (PITCH.halfLength * 0.85), 0, 1);
+  const lane = clamp(1 - Math.abs(ball.x) / (PITCH.goalHalfWidth + 1.6), 0, 1);
+  const towardGoal = Math.sign(ball.vz) === defendZSign ? clamp(Math.abs(ball.vz) / 9, 0, 1) : 0;
+  return clamp(ownHalfDepth * 0.6 + lane * 0.15 + towardGoal * 0.35, 0, 1);
+}
+
+function ballPositionAt(ball, t) {
+  const k = Math.max(TUNING.ball.damping, 0.0001);
+  const f = (1 - Math.exp(-k * t)) / k;
+  return {
+    x: clamp(ball.x + ball.vx * f, -PITCH.halfWidth + 0.5, PITCH.halfWidth - 0.5),
+    z: clamp(ball.z + ball.vz * f, -PITCH.halfLength + 0.5, PITCH.halfLength - 0.5),
+  };
+}
+
+function travelTime(body, x, z) {
+  const dx = x - body.x;
+  const dz = z - body.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 0.02) return 0;
+  const cruise = Math.max(
+    1,
+    (TUNING.player.accel / Math.max(TUNING.player.damping, 0.1)) * AI.cruiseFactor
+  );
+  const along = (body.vx * dx + body.vz * dz) / dist;
+  const rampUp = clamp((cruise - along) / Math.max(TUNING.player.accel, 0.1), 0, 0.8) * 0.5;
+  return dist / cruise + rampUp;
+}
+
+function interceptBall(body, ball) {
+  let t = 0;
+  let point = { x: ball.x, z: ball.z };
+  for (let i = 0; i < AI.interceptIterations; i++) {
+    point = ballPositionAt(ball, t);
+    t = Math.min(AI.interceptHorizon, travelTime(body, point.x, point.z));
+  }
+  return { time: t, x: point.x, z: point.z };
+}
+
+function passFlightTime(distance, speed) {
+  const k = Math.max(TUNING.ball.damping, 0.05);
+  const ratio = (distance * k) / Math.max(speed, 0.1);
+  if (ratio >= 0.92) return Infinity;
+  return -Math.log(1 - ratio) / k;
 }
 
 function passLaneClearance(start, end, opponents) {
   if (opponents.length === 0) return 99;
 
+  const dirX = end.x - start.x;
+  const dirZ = end.z - start.z;
+  const len = Math.hypot(dirX, dirZ);
+  if (len < 0.001) return nearestOpponentDistance(start, opponents);
+
   let clearance = 99;
   for (const opponent of opponents) {
-    clearance = Math.min(clearance, distancePointToSegment(opponent.body, start, end));
+    const relX = opponent.body.x - start.x;
+    const relZ = opponent.body.z - start.z;
+    const along = (relX * dirX + relZ * dirZ) / len;
+    if (along < 0) continue;
+    const t = Math.min(along, len);
+    const px = start.x + (dirX / len) * t;
+    const pz = start.z + (dirZ / len) * t;
+    clearance = Math.min(clearance, Math.hypot(opponent.body.x - px, opponent.body.z - pz));
   }
   return clearance;
 }
 
 function nearestOpponentDistance(point, opponents) {
-  if (opponents.length === 0) return 99;
-
   let distance = 99;
   for (const opponent of opponents) {
-    distance = Math.min(distance, Math.hypot(point.x - opponent.body.x, point.z - opponent.body.z));
+    distance = Math.min(distance, distanceTo(opponent.body, point.x, point.z));
   }
   return distance;
+}
+
+function nearestOpponentTo(x, z, opponents) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const opponent of opponents) {
+    const dist = distanceTo(opponent.body, x, z);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = opponent;
+    }
+  }
+  return best;
 }
 
 function distancePointToSegment(point, start, end) {
@@ -410,21 +885,13 @@ function distancePointToSegment(point, start, end) {
 }
 
 function clearanceScore(clearance) {
-  return clamp((clearance - AI.passLaneRadius) / 3.2, 0, 1);
+  return clamp((clearance - AI.passLaneRadius) / 2.8, 0, 1);
 }
 
-function furtherAhead(a, b, attackZSign) {
-  return attackZSign > 0 ? Math.max(a, b) : Math.min(a, b);
-}
-
-function attackClaimCost(player, target, attackZSign) {
-  const dx = target.x - player.body.x;
-  const dz = target.z - player.body.z;
-  const dist = Math.hypot(dx, dz);
-  const behindBall = (target.z - player.body.z) * attackZSign > -0.1;
-  const behindPenalty = behindBall ? 0 : 0.85;
-  const aiTieBreakPenalty = player.control === 'ai' ? 0.08 : 0;
-  return dist + behindPenalty + aiTieBreakPenalty;
+function supportSide(player, world) {
+  if (Math.abs(player.spawnX) > 0.1) return Math.sign(player.spawnX);
+  if (Math.abs(player.body.x) > 0.1) return Math.sign(player.body.x);
+  return world.teammates.indexOf(player) % 2 === 0 ? -1 : 1;
 }
 
 function steerToward(body, target) {
@@ -442,18 +909,13 @@ function steerToward(body, target) {
   };
 }
 
-function supportSide(player, beliefs) {
-  if (Math.abs(player.spawnX) > 0.1) return Math.sign(player.spawnX);
-  if (Math.abs(player.body.x) > 0.1) return Math.sign(player.body.x);
-  const teamIndex = beliefs.teammates.indexOf(player);
-  return teamIndex % 2 === 0 ? -1 : 1;
+function fallbackTeamState(player) {
+  if (!player.ai.teamStateFallback) player.ai.teamStateFallback = createTeamAIState();
+  return player.ai.teamStateFallback;
 }
 
-function predictBall(ball, leadTime) {
-  return {
-    x: ball.x + ball.vx * leadTime,
-    z: ball.z + ball.vz * leadTime,
-  };
+function distanceTo(body, x, z) {
+  return Math.hypot(x - body.x, z - body.z);
 }
 
 function normalize(x, z) {
@@ -466,10 +928,6 @@ function clampToPitch(point) {
     x: clamp(point.x, -PITCH.halfWidth + 0.8, PITCH.halfWidth - 0.8),
     z: clamp(point.z, -PITCH.halfLength + 0.9, PITCH.halfLength - 0.9),
   };
-}
-
-function clampSignedZ(z, sign, minAbs, maxAbs) {
-  return sign * clamp(z * sign, minAbs, maxAbs);
 }
 
 function nonZeroSign(value) {
