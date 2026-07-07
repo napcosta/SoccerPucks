@@ -26,7 +26,7 @@ export function createCamera() {
   return camera;
 }
 
-export function buildWorld(assets) {
+export function buildWorld(assets, outlineEffect = null) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x89b4df);
   scene.fog = new THREE.Fog(0x8fb8df, 80, 180);
@@ -70,6 +70,7 @@ export function buildWorld(assets) {
   disableOutline(iceMirror.material);
   iceMirror.rotation.x = -Math.PI / 2;
   iceMirror.position.y = -0.02;
+  if (outlineEffect) celShadeMirror(iceMirror, outlineEffect);
   scene.add(iceMirror);
 
   const pitchTex = assets.pitchTexture;
@@ -109,6 +110,26 @@ export function buildWorld(assets) {
   scene.add(scoreboard.group);
 
   return { scene, scoreboard };
+}
+
+// Reflector renders its mirror image with a plain renderer.render(), which skips the
+// outline pass — the reflection would get toon lighting but no ink outlines. Swap the
+// render call it makes internally for an OutlineEffect render so the reflection is
+// cel shaded like the rest of the scene.
+function celShadeMirror(mirror, outlineEffect) {
+  const reflectorRender = mirror.onBeforeRender;
+  mirror.onBeforeRender = (renderer, scene, camera, geometry, material, group) => {
+    const plainRender = renderer.render;
+    renderer.render = (reflectedScene, virtualCamera) => {
+      renderer.render = plainRender;
+      outlineEffect.render(reflectedScene, virtualCamera);
+    };
+    try {
+      reflectorRender(renderer, scene, camera, geometry, material, group);
+    } finally {
+      renderer.render = plainRender;
+    }
+  };
 }
 
 function addSkybox(scene) {

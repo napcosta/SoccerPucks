@@ -166,7 +166,7 @@ async function ensureAssets() {
   loading.classList.remove('hidden');
   loading.textContent = 'Loading stadium...';
   assets = await loadAssets();
-  ({ scene, scoreboard } = buildWorld(assets));
+  ({ scene, scoreboard } = buildWorld(assets, outlineEffect));
   loading.classList.add('hidden');
 }
 
