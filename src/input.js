@@ -1,4 +1,5 @@
 const pressed = new Set();
+let inputLocked = false;
 
 const KEYMAP = {
   KeyW: 'up', ArrowUp: 'up',
@@ -10,6 +11,7 @@ const KEYMAP = {
 };
 
 window.addEventListener('keydown', (e) => {
+  if (inputLocked) return;
   const action = KEYMAP[e.code];
   if (action) {
     pressed.add(action);
@@ -25,6 +27,8 @@ window.addEventListener('keyup', (e) => {
 window.addEventListener('blur', () => pressed.clear());
 
 export function readCommands() {
+  if (inputLocked) return { moveX: 0, moveZ: 0, shoot: false, power: false };
+
   let x = 0;
   let z = 0;
   if (pressed.has('up')) z -= 1;
@@ -42,4 +46,13 @@ export function readCommands() {
     shoot: pressed.has('shoot'),
     power: pressed.has('power'),
   };
+}
+
+export function setInputLocked(locked) {
+  inputLocked = Boolean(locked);
+  if (inputLocked) pressed.clear();
+}
+
+export function clearCommands() {
+  pressed.clear();
 }

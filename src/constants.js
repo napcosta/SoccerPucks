@@ -56,14 +56,16 @@ export const HEROES = {
 };
 
 export const MATCH = {
-  duration: 100,
+  duration: 180,
+  scoreLimit: 3,
   kickoffDelay: 2.2,
   celebrationTime: 2.5,
 };
 
-export const TEAM = { RED: 1, BLUE: 2 };
+export const TEAM = { SPECTATOR: 0, RED: 1, BLUE: 2 };
 
 export const TEAM_COLORS = {
+  [TEAM.SPECTATOR]: 0x8a94aa,
   [TEAM.RED]: 0xd94f43,
   [TEAM.BLUE]: 0x4a7ee0,
 };

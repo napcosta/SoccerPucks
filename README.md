@@ -81,7 +81,7 @@ two to four total players.
 
 - Local 1v1 or 2v2 vs AI, or online peer-to-peer with two to four players
 - First pick a hero (Sam or Tesla)
-- 100 second matches, golden goal on a draw
+- 3 minute matches, first to 3 goals
 - Red defends the left goal, blue defends the right
 
 ## Asset pipeline

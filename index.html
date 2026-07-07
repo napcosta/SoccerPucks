@@ -22,6 +22,52 @@
   <div id="banner" class="hidden"></div>
 </div>
 
+<div id="host-panel" class="hidden" aria-hidden="true">
+  <div id="host-panel-shell" role="dialog" aria-modal="true" aria-labelledby="host-panel-title">
+    <div class="host-panel-header">
+      <div>
+        <span class="host-panel-kicker">Host Room</span>
+        <h2 id="host-panel-title">Match Controls</h2>
+      </div>
+      <button id="host-panel-close" class="tiny-btn" type="button">Resume</button>
+    </div>
+    <div id="host-panel-status">Ready</div>
+    <div class="host-panel-grid">
+      <section class="host-team-card red" aria-label="Red team">
+        <div class="host-team-title">Red</div>
+        <div id="host-red-roster" class="host-team-roster"></div>
+      </section>
+      <section class="host-team-card spectator" aria-label="Spectators">
+        <div class="host-team-title">Spectators</div>
+        <div id="host-spectator-roster" class="host-team-roster"></div>
+      </section>
+      <section class="host-team-card blue" aria-label="Blue team">
+        <div class="host-team-title">Blue</div>
+        <div id="host-blue-roster" class="host-team-roster"></div>
+      </section>
+      <section class="host-settings-card" aria-label="Match settings">
+        <div class="host-team-title">Match</div>
+        <label class="host-setting">
+          <span>Time limit</span>
+          <span class="host-number-field">
+            <input id="host-time-limit" type="number" min="0.5" max="15" step="0.1" inputmode="decimal" />
+            <span>min</span>
+          </span>
+        </label>
+        <label class="host-setting">
+          <span>Score limit</span>
+          <span class="host-number-field">
+            <input id="host-score-limit" type="number" min="0" max="15" step="1" inputmode="numeric" />
+            <span>goals</span>
+          </span>
+        </label>
+        <button id="host-restart-btn" class="tiny-btn" type="button">Restart Match</button>
+        <button id="host-leave-btn" class="tiny-btn danger-btn" type="button">Leave Game</button>
+      </section>
+    </div>
+  </div>
+</div>
+
 <div id="menu">
   <h1>SOCCER PUCKS</h1>
   <p class="subtitle">3D arcade ball - pick your hero</p>

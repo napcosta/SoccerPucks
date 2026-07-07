@@ -43,6 +43,8 @@ export class Game {
     localPlayerIndex = 0,
     authoritative = true,
     inputProvider = null,
+    timeLimitSeconds = MATCH.duration,
+    scoreLimit = MATCH.scoreLimit,
   }) {
     this.scene = scene;
     this.camera = camera;
@@ -55,7 +57,9 @@ export class Game {
 
     this.state = 'kickoff';
     this.stateTimer = MATCH.kickoffDelay;
-    this.timeLeft = MATCH.duration;
+    this.matchDuration = normalizeTimeLimitSeconds(timeLimitSeconds);
+    this.timeLeft = this.matchDuration;
+    this.scoreLimit = normalizeScoreLimit(scoreLimit);
     this.score = { [TEAM.RED]: 0, [TEAM.BLUE]: 0 };
     this.goldenGoal = false;
     this.onMatchEnd = null;
@@ -81,8 +85,15 @@ export class Game {
           control: 'ai',
         },
       ];
-    this.players = specs.map((spec) =>
-      this.createPlayer(spec.heroKind, spec.team, spec.spawnX ?? 0, spec.spawnZ, spec.control)
+    this.players = specs.map((spec, index) =>
+      this.createPlayer(
+        spec.heroKind,
+        spec.team,
+        spec.spawnX ?? 0,
+        spec.spawnZ,
+        spec.control,
+        spec.nickname ?? `Player ${index + 1}`
+      )
     );
 
     this.resetPositions();
@@ -119,7 +130,7 @@ export class Game {
     };
   }
 
-  createPlayer(heroKind, team, spawnX, spawnZ, control = 'ai') {
+  createPlayer(heroKind, team, spawnX, spawnZ, control = 'ai', nickname = 'Player') {
     const gltfSource = heroGltfSource(this.assets, heroKind);
     const mesh = cloneHeroScene(gltfSource);
     const meshScale = (PLAYER.radius * 2) / 2.96;
@@ -140,6 +151,7 @@ export class Game {
 
     const player = {
       heroKind,
+      nickname,
       team,
       control,
       isHuman: control === 'local',
@@ -164,6 +176,7 @@ export class Game {
     player.onPowerFX = (type) => this.spawnPowerFX(player, type);
     player.hero = createHero(heroKind, player);
     if (heroKind === 'tesla') player.antennaFX = createTeslaAntennaFX(mesh);
+    mesh.visible = isPlayerActive(player);
     return player;
   }
 
@@ -183,15 +196,161 @@ export class Game {
     this.ball.body.vz = 0;
     resetVisualPosition(this.ball);
     for (const p of this.players) {
+      const active = isPlayerActive(p);
       p.body.x = p.spawnX;
       p.body.z = p.spawnZ;
       p.body.vx = 0;
       p.body.vz = 0;
+      p.shootHeld = false;
+      p.powerHeld = false;
+      p.mesh.visible = active;
+      if (!active) p.intentLabel.sprite.visible = false;
       resetVisualPosition(p);
       updateFacingTowardBall(p, this.ball.body);
       if (p.hero.active) p.hero.release?.(this.ball.body);
       this.playAction(p, 'Idle');
     }
+  }
+
+  restartMatch() {
+    clearTimeout(this.bannerTimeout);
+    this.score[TEAM.RED] = 0;
+    this.score[TEAM.BLUE] = 0;
+    this.timeLeft = this.matchDuration;
+    this.goldenGoal = false;
+    this.state = 'kickoff';
+    this.stateTimer = MATCH.kickoffDelay;
+
+    for (const p of this.players) {
+      resetHeroState(p.hero);
+    }
+
+    this.resetPositions();
+    this.showBanner('KICK OFF', MATCH.kickoffDelay * 0.8);
+    this.updateHud();
+  }
+
+  setMatchSettings({ timeLimitSeconds, scoreLimit } = {}) {
+    if (timeLimitSeconds != null) this.setTimeLimitSeconds(timeLimitSeconds);
+    if (scoreLimit != null) this.setScoreLimit(scoreLimit);
+    this.updateHud();
+  }
+
+  getMatchSettings() {
+    return {
+      timeLimitSeconds: this.matchDuration,
+      scoreLimit: this.scoreLimit,
+    };
+  }
+
+  setTimeLimitSeconds(value) {
+    const nextDuration = normalizeTimeLimitSeconds(value, this.matchDuration);
+    const elapsed = Math.max(0, this.matchDuration - this.timeLeft);
+    this.matchDuration = nextDuration;
+    this.timeLeft = clamp(nextDuration - elapsed, 0, nextDuration);
+    if (this.timeLeft > 0 && this.goldenGoal) {
+      this.goldenGoal = false;
+      this.hideBanner();
+    }
+    this.enforceTimeLimit();
+  }
+
+  setScoreLimit(value) {
+    this.scoreLimit = normalizeScoreLimit(value, this.scoreLimit);
+    if (this.hasScoreLimitWinner()) this.endMatch();
+  }
+
+  setPlayerLayout(playerSpecs) {
+    if (!Array.isArray(playerSpecs)) return;
+
+    let changed = false;
+    for (let i = 0; i < this.players.length; i++) {
+      const spec = playerSpecs[i];
+      if (!spec) continue;
+      changed = this.applyPlayerSpec(this.players[i], spec) || changed;
+    }
+
+    if (!changed) return;
+    this.resetPositions();
+    if (this.state === 'over') {
+      this.updateHud();
+      return;
+    }
+    this.state = 'kickoff';
+    this.stateTimer = MATCH.kickoffDelay;
+    this.showBanner('ROSTER UPDATED', 1.4, '#ffd84a');
+  }
+
+  applyPlayerSpec(player, spec) {
+    if (!player || !spec) return false;
+
+    let changed = false;
+    const heroKind = normalizeHeroKind(spec.heroKind, player.heroKind);
+    if (player.heroKind !== heroKind) {
+      this.setPlayerHero(player, heroKind);
+      changed = true;
+    }
+
+    const team = normalizeTeamValue(spec.team, player.team);
+    if (player.team !== team) {
+      player.team = team;
+      tintHero(player.mesh, TEAM_COLORS[team]);
+      player.mesh.visible = isPlayerActive(player);
+      changed = true;
+    }
+
+    const spawnX = finiteOr(spec.spawnX, player.spawnX);
+    const spawnZ = finiteOr(spec.spawnZ, player.spawnZ);
+    if (player.spawnX !== spawnX || player.spawnZ !== spawnZ) {
+      player.spawnX = spawnX;
+      player.spawnZ = spawnZ;
+      changed = true;
+    }
+
+    if (typeof spec.nickname === 'string') player.nickname = spec.nickname;
+    return changed;
+  }
+
+  setPlayerHero(player, heroKind) {
+    if (!player || player.heroKind === heroKind) return;
+
+    if (player.hero?.active) player.hero.release?.(this.ball.body);
+    player.shootHeld = false;
+    player.powerHeld = false;
+
+    if (player.antennaFX) {
+      disposeTeslaAntennaFX(player.antennaFX);
+      player.antennaFX = null;
+    }
+
+    this.scene.remove(player.mesh);
+
+    const gltfSource = heroGltfSource(this.assets, heroKind);
+    const mesh = cloneHeroScene(gltfSource);
+    const meshScale = (PLAYER.radius * 2) / 2.96;
+    mesh.scale.setScalar(meshScale);
+    tintHero(mesh, TEAM_COLORS[player.team]);
+    mesh.visible = isPlayerActive(player);
+    const surfaceY = footLift(mesh) + PITCH.surfaceY;
+    this.scene.add(mesh);
+
+    const mixer = new THREE.AnimationMixer(mesh);
+    const actions = {};
+    for (const name of ['Idle', 'Celebrate', 'Sad']) {
+      const clip = THREE.AnimationClip.findByName(gltfSource.animations, name);
+      if (clip) actions[name] = mixer.clipAction(clip);
+    }
+    actions.Idle?.play();
+
+    player.heroKind = heroKind;
+    player.mesh = mesh;
+    player.mixer = mixer;
+    player.actions = actions;
+    player.currentAction = 'Idle';
+    player.surfaceY = surfaceY;
+    player.hero = createHero(heroKind, player);
+    player.onPowerFX = (type) => this.spawnPowerFX(player, type);
+    if (heroKind === 'tesla') player.antennaFX = createTeslaAntennaFX(mesh);
   }
 
   screenToWorld(commands) {
@@ -226,15 +385,7 @@ export class Game {
 
       if (this.state === 'playing') {
         if (!DEBUG.freezeTimer) this.timeLeft -= dt;
-        if (this.timeLeft <= 0) {
-          this.timeLeft = 0;
-          if (this.score[TEAM.RED] === this.score[TEAM.BLUE] && !this.goldenGoal) {
-            this.goldenGoal = true;
-            this.showBanner('GOLDEN GOAL', 2);
-          } else if (!this.goldenGoal) {
-            this.endMatch();
-          }
-        }
+        this.enforceTimeLimit();
         this.simulate(dt);
       }
     } else if (this.state === 'playing') {
@@ -253,6 +404,8 @@ export class Game {
   }
 
   commandsForPlayer(p, index, ballBody, dt) {
+    if (!isPlayerActive(p)) return { moveX: 0, moveZ: 0, shoot: false, power: false };
+
     if (p.control === 'local') return this.screenToWorld(readCommands());
 
     if (p.control === 'remote') {
@@ -266,9 +419,10 @@ export class Game {
     }
 
     if (DEBUG.disableAI) return { moveX: 0, moveZ: 0, shoot: false, power: false };
+    const activePlayers = this.players.filter(isPlayerActive);
     return computeAICommands(p, ballBody, {
-      players: this.players,
-      playerIndex: index,
+      players: activePlayers,
+      playerIndex: activePlayers.indexOf(p),
       dt,
       defendZSign: Math.sign(p.spawnZ),
     });
@@ -276,7 +430,7 @@ export class Game {
 
   predictLocalPlayer(dt) {
     const p = this.players[this.localPlayerIndex];
-    if (!p || p.control !== 'local') return;
+    if (!p || p.control !== 'local' || !isPlayerActive(p)) return;
 
     const player = TUNING.player;
     const raw = this.screenToWorld(readCommands());
@@ -297,6 +451,7 @@ export class Game {
     ballBody.mass = ball.mass;
     for (let i = 0; i < this.players.length; i++) {
       const p = this.players[i];
+      if (!isPlayerActive(p)) continue;
       p.body.mass = player.mass;
 
       const raw = this.commandsForPlayer(p, i, ballBody, dt);
@@ -336,10 +491,13 @@ export class Game {
     collideGoalPosts(ballBody, ball.wallRestitution);
 
     for (const p of this.players) {
+      if (!isPlayerActive(p)) continue;
       collideCircles(p.body, ballBody, ball.playerRestitution);
     }
     for (let i = 0; i < this.players.length; i++) {
+      if (!isPlayerActive(this.players[i])) continue;
       for (let j = i + 1; j < this.players.length; j++) {
+        if (!isPlayerActive(this.players[j])) continue;
         collideCircles(this.players[i].body, this.players[j].body, 0.3);
       }
     }
@@ -356,6 +514,7 @@ export class Game {
     this.showBanner('GOAL!', MATCH.celebrationTime, color);
 
     for (const p of this.players) {
+      if (!isPlayerActive(p)) continue;
       this.playAction(p, p.team === team ? 'Celebrate' : 'Sad');
     }
 
@@ -363,7 +522,25 @@ export class Game {
       this.endMatch();
       return;
     }
+    if (this.hasScoreLimitWinner()) {
+      this.endMatch();
+      return;
+    }
     if (this.timeLeft <= 0) this.endMatch();
+  }
+
+  enforceTimeLimit() {
+    if (this.timeLeft > 0 || this.state === 'over') return;
+
+    this.timeLeft = 0;
+    this.endMatch();
+  }
+
+  hasScoreLimitWinner() {
+    if (this.scoreLimit <= 0) return false;
+    const red = this.score[TEAM.RED];
+    const blue = this.score[TEAM.BLUE];
+    return red !== blue && (red >= this.scoreLimit || blue >= this.scoreLimit);
   }
 
   endMatch() {
@@ -382,6 +559,7 @@ export class Game {
     }
     this.showBanner(text, 4, color);
     for (const p of this.players) {
+      if (!isPlayerActive(p)) continue;
       const won =
         (p.team === TEAM.RED && red > blue) || (p.team === TEAM.BLUE && blue > red);
       this.playAction(p, won ? 'Celebrate' : 'Sad');
@@ -391,6 +569,12 @@ export class Game {
   syncVisuals(dt) {
     const ballBody = this.ball.body;
     for (const p of this.players) {
+      if (!isPlayerActive(p)) {
+        p.mesh.visible = false;
+        p.intentLabel.sprite.visible = false;
+        continue;
+      }
+      p.mesh.visible = true;
       const smoothRemote = !this.authoritative && this.state === 'playing' && p.control === 'remote';
       const pos = syncVisualPosition(p, dt, smoothRemote, REMOTE_HERO_VISUAL);
       p.mesh.position.set(pos.x, p.surfaceY, pos.z);
@@ -491,7 +675,8 @@ export class Game {
       this.goldenGoal
     );
     const local = this.players[this.localPlayerIndex] ?? this.players[0];
-    this.hud.powerFill.style.width = `${local.hero.cooldownFraction * 100}%`;
+    const powerFraction = local && isPlayerActive(local) ? local.hero.cooldownFraction : 0;
+    this.hud.powerFill.style.width = `${powerFraction * 100}%`;
   }
 
   showBanner(text, duration, color = '#ffffff') {
@@ -517,7 +702,9 @@ export class Game {
       seq,
       state: this.state,
       stateTimer: this.stateTimer,
+      matchDuration: this.matchDuration,
       timeLeft: this.timeLeft,
+      scoreLimit: this.scoreLimit,
       score: { red: this.score[TEAM.RED], blue: this.score[TEAM.BLUE] },
       goldenGoal: this.goldenGoal,
       banner: this.activeBanner,
@@ -526,6 +713,11 @@ export class Game {
         heading: this.ball.heading,
       },
       players: this.players.map((p) => ({
+        nickname: p.nickname,
+        heroKind: p.heroKind,
+        team: p.team,
+        spawnX: p.spawnX,
+        spawnZ: p.spawnZ,
         body: serializeBody(p.body),
         facingX: p.facingX,
         facingZ: p.facingZ,
@@ -543,7 +735,9 @@ export class Game {
 
     this.state = snapshot.state;
     this.stateTimer = snapshot.stateTimer;
+    this.matchDuration = normalizeTimeLimitSeconds(snapshot.matchDuration, this.matchDuration);
     this.timeLeft = snapshot.timeLeft;
+    this.scoreLimit = normalizeScoreLimit(snapshot.scoreLimit, this.scoreLimit);
     this.score[TEAM.RED] = snapshot.score.red;
     this.score[TEAM.BLUE] = snapshot.score.blue;
     this.goldenGoal = snapshot.goldenGoal;
@@ -555,6 +749,7 @@ export class Game {
       const p = this.players[i];
       const sp = snapshot.players[i];
       if (!sp) continue;
+      this.applyPlayerSpec(p, sp);
       applyBody(p.body, sp.body);
       p.facingX = sp.facingX;
       p.facingZ = sp.facingZ;
@@ -736,6 +931,53 @@ function applyHero(hero, snapshot) {
   if ('active' in hero) hero.active = snapshot.active;
   if ('holdRemaining' in hero) hero.holdRemaining = snapshot.holdRemaining;
   if ('captured' in hero) hero.captured = snapshot.captured;
+}
+
+function resetHeroState(hero) {
+  if (!hero) return;
+  hero.cooldownRemaining = 0;
+  if ('active' in hero) hero.active = false;
+  if ('holdRemaining' in hero) hero.holdRemaining = 0;
+  if ('captured' in hero) hero.captured = false;
+}
+
+function isPlayerActive(player) {
+  return player?.team !== TEAM.SPECTATOR;
+}
+
+function normalizeHeroKind(heroKind, fallback = 'sam') {
+  if (heroKind === 'tesla') return 'tesla';
+  if (heroKind === 'sam') return 'sam';
+  return fallback === 'tesla' ? 'tesla' : 'sam';
+}
+
+function normalizeTimeLimitSeconds(value, fallback = MATCH.duration) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) return fallback;
+  return clamp(seconds, 30, 15 * 60);
+}
+
+function normalizeScoreLimit(value, fallback = MATCH.scoreLimit) {
+  const goals = Math.floor(Number(value));
+  if (!Number.isFinite(goals)) return fallback;
+  return clamp(goals, 0, 15);
+}
+
+function normalizeTeamValue(team, fallback = TEAM.RED) {
+  const parsed = Number(team);
+  if (parsed === TEAM.SPECTATOR) return TEAM.SPECTATOR;
+  if (parsed === TEAM.BLUE) return TEAM.BLUE;
+  if (parsed === TEAM.RED) return TEAM.RED;
+  return fallback;
+}
+
+function finiteOr(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function dampAngle(current, target, lambda, dt) {
