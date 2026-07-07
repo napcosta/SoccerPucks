@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { Reflector } from 'three/addons/objects/Reflector.js';
 import { PITCH, GOAL } from './constants.js';
 import { footLift } from './assets.js';
 import { createScoreboard } from './scoreboard.js';
@@ -57,12 +58,29 @@ export function buildWorld(assets) {
   ground.receiveShadow = true;
   scene.add(ground);
 
+  const iceMirror = new Reflector(
+    new THREE.PlaneGeometry(PITCH.halfWidth * 2, (PITCH.halfLength + PITCH.goalDepth) * 2),
+    {
+      clipBias: 0.003,
+      textureWidth: 2048,
+      textureHeight: 2048,
+      color: 0x7d8fa6,
+    }
+  );
+  disableOutline(iceMirror.material);
+  iceMirror.rotation.x = -Math.PI / 2;
+  iceMirror.position.y = -0.02;
+  scene.add(iceMirror);
+
   const pitchTex = assets.pitchTexture;
   pitchTex.repeat.set(2, 3);
+  // Translucent so the mirror underneath shows through as an ice reflection.
   const pitchMat = disableOutline(
     new THREE.MeshToonMaterial({
       map: pitchTex,
       gradientMap: toonGradientMap(),
+      transparent: true,
+      opacity: 0.55,
     })
   );
   const pitch = new THREE.Mesh(
