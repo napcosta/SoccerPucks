@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { TUNING } from './tuning.js';
+import { toonGradientMap, disableOutline } from './toon.js';
 const CANVAS_W = 960;
 const CANVAS_H = 180;
 const BOARD_W = 9.8;
@@ -179,7 +180,7 @@ export function createScoreboard() {
 
   const frame = new THREE.Mesh(
     new THREE.BoxGeometry(BOARD_W + 0.14, BOARD_H + 0.14, 0.1),
-    new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.85, metalness: 0.1 })
+    new THREE.MeshToonMaterial({ color: 0x0a0a0a, gradientMap: toonGradientMap() })
   );
   frame.position.z = -0.05;
   frame.castShadow = true;
@@ -187,7 +188,7 @@ export function createScoreboard() {
 
   const face = new THREE.Mesh(
     new THREE.PlaneGeometry(BOARD_W, BOARD_H),
-    new THREE.MeshBasicMaterial({ map: texture, toneMapped: false })
+    disableOutline(new THREE.MeshBasicMaterial({ map: texture, toneMapped: false }))
   );
   face.position.z = 0.02;
   group.add(face);

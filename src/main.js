@@ -1,3 +1,4 @@
+import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { loadAssets } from './assets.js';
 import { createRenderer, createCamera, buildWorld } from './scene.js';
 import { Game } from './game.js';
@@ -114,9 +115,9 @@ for (const btn of document.querySelectorAll('.hero-btn')) {
 }
 
 let selectedLocalTeamSize = 1;
-for (const btn of document.querySelectorAll('.match-size-btn')) {
+for (const btn of document.querySelectorAll('#local-size-pick .match-size-btn')) {
   btn.addEventListener('click', () => {
-    const previous = document.querySelector('.match-size-btn.selected');
+    const previous = document.querySelector('#local-size-pick .match-size-btn.selected');
     previous?.classList.remove('selected');
     previous?.setAttribute('aria-pressed', 'false');
     btn.classList.add('selected');
@@ -126,7 +127,23 @@ for (const btn of document.querySelectorAll('.match-size-btn')) {
   });
 }
 
+let selectedLocalDifficulty = 'medium';
+for (const btn of document.querySelectorAll('#local-difficulty-pick .difficulty-btn')) {
+  btn.addEventListener('click', () => {
+    const previous = document.querySelector('#local-difficulty-pick .difficulty-btn.selected');
+    previous?.classList.remove('selected');
+    previous?.setAttribute('aria-pressed', 'false');
+    btn.classList.add('selected');
+    btn.setAttribute('aria-pressed', 'true');
+    selectedLocalDifficulty = normalizeLocalDifficulty(btn.dataset.difficulty);
+  });
+}
+
 const renderer = createRenderer(canvas);
+const outlineEffect = new OutlineEffect(renderer, {
+  defaultThickness: 0.0028,
+  defaultColor: [0.04, 0.045, 0.07],
+});
 const camera = createCamera();
 
 let scene = null;
@@ -357,6 +374,7 @@ async function startLocalMatch() {
     started: true,
     players,
     matchSettings,
+    aiDifficulty: selectedLocalDifficulty,
   };
 
   enterGameView();
@@ -371,6 +389,7 @@ async function startLocalMatch() {
     localPlayerIndex: 0,
     timeLimitSeconds: matchSettings.timeLimitSeconds,
     scoreLimit: matchSettings.scoreLimit,
+    aiDifficulty: selectedLocalDifficulty,
   });
   installEditableMatchEndHandler();
 }
@@ -1328,6 +1347,10 @@ function normalizeLocalTeamSize(teamSize) {
   return Number(teamSize) === 2 ? 2 : 1;
 }
 
+function normalizeLocalDifficulty(difficulty) {
+  return difficulty === 'easy' || difficulty === 'hard' ? difficulty : 'medium';
+}
+
 function buildLocalPlayers(teamSize) {
   return localRosterSlots(teamSize).map((slot) =>
     localPlayerSpec(
@@ -1553,7 +1576,7 @@ function frame(now) {
   updateOnlineTransport(dt);
   scoreboard?.syncPosition();
   updatePhysicsOverlay(game, dt);
-  if (scene) renderer.render(scene, camera);
+  if (scene) outlineEffect.render(scene, camera);
 
   requestAnimationFrame(frame);
 }

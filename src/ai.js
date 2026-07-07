@@ -58,6 +58,46 @@ const AI = Object.freeze({
   dashHeadingMin: 0.72,
   magnetGrabRange: 2.6,
   magnetContestRange: 3.0,
+  humanReclaimTime: 1.2,
+  humanEngagedBias: 0.25,
+  humanIdlePenalty: 1.5,
+  yieldContestRange: 2.2,
+  keeperFallbackMargin: 0.25,
+  keeperDanger: 0.75,
+  roleStickiness: 0.8,
+});
+
+export const AI_DIFFICULTY = Object.freeze({
+  easy: Object.freeze({
+    key: 'easy',
+    speedScale: 0.78,
+    reactionTicks: 9,
+    aimJitter: 0.18,
+    shotBias: -0.22,
+    passBias: 0.1,
+    interceptHorizon: 1.6,
+    powerChance: 0.35,
+  }),
+  medium: Object.freeze({
+    key: 'medium',
+    speedScale: 1,
+    reactionTicks: 0,
+    aimJitter: 0,
+    shotBias: 0,
+    passBias: 0,
+    interceptHorizon: AI.interceptHorizon,
+    powerChance: 1,
+  }),
+  hard: Object.freeze({
+    key: 'hard',
+    speedScale: 1,
+    reactionTicks: 0,
+    aimJitter: 0,
+    shotBias: 0.05,
+    passBias: -0.06,
+    interceptHorizon: 3.4,
+    powerChance: 1,
+  }),
 });
 
 export function createTeamAIState() {
@@ -67,11 +107,14 @@ export function createTeamAIState() {
     roles: new Map(),
     passPlan: null,
     carrier: null,
+    interceptor: null,
     stallRef: null,
     ballStalled: false,
     ballStalledLong: false,
     teamHasBall: false,
     oppHasBall: false,
+    humanEngaged: false,
+    lastPossessionTime: 0,
     danger: 0,
   };
 }
@@ -81,11 +124,14 @@ export function resetTeamAIState(state) {
   state.roles = new Map();
   state.passPlan = null;
   state.carrier = null;
+  state.interceptor = null;
   state.stallRef = null;
   state.ballStalled = false;
   state.ballStalledLong = false;
   state.teamHasBall = false;
   state.oppHasBall = false;
+  state.humanEngaged = false;
+  state.lastPossessionTime = 0;
   state.danger = 0;
 }
 
@@ -104,6 +150,10 @@ export function computeAICommands(player, ball, contextOrDefendZSign = {}) {
 
   const teamState = context.teamState ?? fallbackTeamState(player);
   const tick = Number.isFinite(context.tick) ? context.tick : teamState.tick + 1;
+  const profile = context.profile ?? AI_DIFFICULTY.medium;
+  const playerIndex = Number.isFinite(context.playerIndex)
+    ? context.playerIndex
+    : players.indexOf(player);
 
   const teammates = players.filter((p) => p.team === player.team);
   const opponents = players.filter((p) => p.team !== player.team);
@@ -113,8 +163,30 @@ export function computeAICommands(player, ball, contextOrDefendZSign = {}) {
     updateTeamState(teamState, teammates, opponents, ball, defendZSign, attackZSign, dt);
   }
 
-  const world = buildWorld(player, ball, teammates, opponents, teamState, defendZSign, attackZSign);
-  const decision = decide(player, world);
+  const world = buildWorld(
+    player,
+    ball,
+    teammates,
+    opponents,
+    teamState,
+    defendZSign,
+    attackZSign,
+    profile
+  );
+  let decision = decide(player, world);
+
+  if (profile.reactionTicks > 0) {
+    const held = player.ai.heldDecision;
+    if (held && tick < held.untilTick && held.target) {
+      decision = { name: held.name, target: held.target };
+    } else {
+      player.ai.heldDecision = {
+        name: decision.name,
+        target: decision.target ? { x: decision.target.x, z: decision.target.z } : null,
+        untilTick: tick + profile.reactionTicks,
+      };
+    }
+  }
 
   player.ai.intent = INTENT_FOR_ROLE[world.role] ?? 'attackBall';
   player.ai.action = decision.name;
@@ -131,14 +203,30 @@ export function computeAICommands(player, ball, contextOrDefendZSign = {}) {
     else player.ai.shootCooldown = 0.22;
   }
 
+  let kickX = decision.kickX ?? 0;
+  let kickZ = decision.kickZ ?? 0;
+  if (shoot && profile.aimJitter > 0 && (kickX !== 0 || kickZ !== 0)) {
+    const angle = (noise01(tick, playerIndex) * 2 - 1) * profile.aimJitter;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const rotatedX = kickX * cos - kickZ * sin;
+    kickZ = kickX * sin + kickZ * cos;
+    kickX = rotatedX;
+  }
+
+  let power = shouldUsePower(player, world, decision);
+  if (power && profile.powerChance < 1) {
+    power = noise01(tick, playerIndex + 13) < profile.powerChance;
+  }
+
   return {
-    moveX: move.x,
-    moveZ: move.z,
+    moveX: move.x * profile.speedScale,
+    moveZ: move.z * profile.speedScale,
     shoot,
-    kickX: decision.kickX ?? 0,
-    kickZ: decision.kickZ ?? 0,
+    kickX,
+    kickZ,
     kickMultiplier: decision.kickMultiplier ?? 1,
-    power: shouldUsePower(player, world, decision),
+    power,
   };
 }
 
@@ -157,6 +245,21 @@ function updateTeamState(state, teammates, opponents, ball, defendZSign, attackZ
   const oppHasBall = Boolean(carrier && opponents.includes(carrier));
   const teamHasBall = Boolean(carrier && !oppHasBall);
   const danger = computeDanger(ball, defendZSign);
+
+  if (carrier) state.lastPossessionTime = state.time;
+  state.humanEngaged = false;
+  for (const teammate of teammates) {
+    if (teammate.control === 'ai') continue;
+    const body = teammate.body;
+    const dx = ball.x - body.x;
+    const dz = ball.z - body.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    const closing = (body.vx * dx + body.vz * dz) / dist;
+    if (closing > 0.6 || (dist < 1.1 && Math.hypot(body.vx, body.vz) > 0.8)) {
+      state.humanEngaged = true;
+      break;
+    }
+  }
 
   const ref = state.stallRef;
   if (!ref || Math.hypot(ball.x - ref.x, ball.z - ref.z) > 1.4) {
@@ -182,7 +285,16 @@ function updateTeamState(state, teammates, opponents, ball, defendZSign, attackZ
       const intercept = interceptBall(teammate.body, ball);
       let cost = intercept.time;
       if ((ball.z - teammate.body.z) * attackZSign < -0.2) cost += AI.wrongSidePenalty;
-      if (teammate.control === 'ai') cost += AI.aiTieBreak;
+      if (teammate.control === 'ai') {
+        cost += AI.aiTieBreak;
+      } else if (state.humanEngaged) {
+        cost -= AI.humanEngagedBias;
+      } else if (
+        oppHasBall ||
+        (!carrier && state.time - state.lastPossessionTime > AI.humanReclaimTime)
+      ) {
+        cost += AI.humanIdlePenalty;
+      }
       if (state.roles.get(teammate)?.role === ROLE.STRIKER) cost -= AI.strikerHysteresis;
       if (cost < bestCost) {
         bestCost = cost;
@@ -192,21 +304,50 @@ function updateTeamState(state, teammates, opponents, ball, defendZSign, attackZ
   }
 
   const ownGoalZ = PITCH.halfLength * defendZSign;
+  const prevRoles = state.roles;
+  const goalDistance = (teammate) =>
+    distanceTo(teammate.body, 0, ownGoalZ) -
+    (prevRoles.get(teammate)?.role === ROLE.DEFENDER ? AI.roleStickiness : 0);
   const others = teammates
     .filter((teammate) => teammate !== striker)
-    .sort((a, b) => distanceTo(a.body, 0, ownGoalZ) - distanceTo(b.body, 0, ownGoalZ));
+    .sort((a, b) => goalDistance(a) - goalDistance(b));
 
   const defending =
     oppHasBall || danger > AI.dangerDefend || (!teamHasBall && ball.z * defendZSign > 0.5);
 
+  const humanStriker = Boolean(striker && striker.control !== 'ai');
   const roles = new Map();
   if (striker) roles.set(striker, { role: ROLE.STRIKER });
   others.forEach((teammate, index) => {
     let role = ROLE.SUPPORT;
     if (defending) role = index === 0 ? ROLE.DEFENDER : ROLE.MARKER;
     else if (others.length >= 2 && index === 0) role = ROLE.DEFENDER;
+    else if (
+      humanStriker &&
+      index === 0 &&
+      ball.z * attackZSign > 0 &&
+      ball.z * attackZSign < PITCH.halfLength * 0.55
+    ) {
+      // Human striker pushing through midfield: cover the back instead of doubling
+      // up on the ball. Once play is deep in the attacking third, join as support.
+      role = ROLE.DEFENDER;
+    }
     roles.set(teammate, { role });
   });
+
+  let interceptor = null;
+  if (shotThreat(ball, defendZSign, ownGoalZ)) {
+    let bestTime = Infinity;
+    for (const teammate of teammates) {
+      if (teammate.control !== 'ai') continue;
+      const time = interceptBall(teammate.body, ball).time;
+      if (time < bestTime) {
+        bestTime = time;
+        interceptor = teammate;
+      }
+    }
+  }
+  state.interceptor = interceptor;
 
   state.roles = roles;
   state.carrier = carrier;
@@ -215,8 +356,17 @@ function updateTeamState(state, teammates, opponents, ball, defendZSign, attackZ
   state.danger = danger;
 }
 
-function buildWorld(player, ball, teammates, opponents, teamState, defendZSign, attackZSign) {
-  const myIntercept = interceptBall(player.body, ball);
+function buildWorld(
+  player,
+  ball,
+  teammates,
+  opponents,
+  teamState,
+  defendZSign,
+  attackZSign,
+  profile
+) {
+  const myIntercept = interceptBall(player.body, ball, profile.interceptHorizon);
   let oppInterceptTime = Infinity;
   let nearestOppToBall = Infinity;
   let pressure = Infinity;
@@ -232,6 +382,7 @@ function buildWorld(player, ball, teammates, opponents, teamState, defendZSign, 
     teammates,
     opponents,
     teamState,
+    profile,
     defendZSign,
     attackZSign,
     ownGoalZ: PITCH.halfLength * defendZSign,
@@ -259,15 +410,35 @@ function decide(player, world) {
   const teammateOnBall =
     world.carrier && world.carrier !== player && world.teammates.includes(world.carrier);
   if (world.hasBall && !stolen && !teammateOnBall) return possessionDecision(player, world);
-  if (world.role === ROLE.STRIKER) return strikerDecision(player, world);
+  if (world.role === ROLE.STRIKER) {
+    if (shouldYieldToHuman(player, world)) return supportDecision(player, world);
+    return strikerDecision(player, world);
+  }
   if (world.role === ROLE.SUPPORT) return supportDecision(player, world);
   if (world.role === ROLE.MARKER) return markerDecision(player, world);
   return defenderDecision(player, world);
 }
 
+function shouldYieldToHuman(player, world) {
+  const carrier = world.carrier;
+  if (!carrier || carrier === player || carrier.control === 'ai') return false;
+  if (!world.teammates.includes(carrier)) return false;
+  if (world.stalledLong) return false;
+  return world.nearestOppToBall > AI.yieldContestRange;
+}
+
 function strikerDecision(player, world) {
   const emergency = emergencyDecision(player, world);
   if (emergency) return emergency;
+
+  if (
+    !world.teamHasBall &&
+    !world.oppHasBall &&
+    world.danger > AI.dangerDefend &&
+    world.myIntercept.time > world.oppInterceptTime + AI.keeperFallbackMargin
+  ) {
+    return defenderDecision(player, world);
+  }
 
   if (world.teamState.passPlan?.receiver === player) {
     const point = clampToPitch(world.myIntercept);
@@ -320,12 +491,13 @@ function possessionDecision(player, world) {
   const pressured = world.pressure < AI.pressureDist;
   const stalled = world.stalled;
 
+  const { shotBias, passBias } = world.profile;
   const shotReady =
     shot &&
-    (shot.score > AI.shotMinScore ||
-      (shot.distToGoal < AI.shotCloseRange && shot.score > AI.shotCloseMinScore) ||
-      (stalled && world.attackingHalf > 0.5 && shot.score > AI.shotScrappyScore));
-  const passReady = pass && pass.score >= AI.passMinScore;
+    (shot.score > AI.shotMinScore + shotBias ||
+      (shot.distToGoal < AI.shotCloseRange && shot.score > AI.shotCloseMinScore + shotBias) ||
+      (stalled && world.attackingHalf > 0.5 && shot.score > AI.shotScrappyScore + shotBias));
+  const passReady = pass && pass.score >= AI.passMinScore + passBias;
 
   if (shotReady && (!passReady || shot.score > pass.score - 0.15 || world.attackingHalf > 0.55)) {
     return kickAction(player, world, shot.target, 1.05, 'shootGoal');
@@ -632,6 +804,17 @@ function defenderDecision(player, world) {
   }
 
   const { ball } = world;
+  if (world.danger > AI.keeperDanger) {
+    const goalward = Math.sign(ball.vz) === world.defendZSign && Math.abs(ball.vz) > 0.5;
+    const t = goalward ? (world.ownGoalZ - ball.z) / ball.vz : -1;
+    const crossX = t > 0 && t < 3.5 ? ball.x + ball.vx * t : ball.x;
+    const target = clampToPitch({
+      x: clamp(crossX, -PITCH.goalHalfWidth * 0.9, PITCH.goalHalfWidth * 0.9),
+      z: world.ownGoalZ - world.defendZSign * AI.guardMinDist,
+    });
+    return { name: 'keepGoal', target, move: steerToward(player.body, target) };
+  }
+
   const dx = ball.x;
   const dz = ball.z - world.ownGoalZ;
   const ballToGoalDist = Math.hypot(dx, dz) || 1;
@@ -664,17 +847,22 @@ function markerDecision(player, world) {
 }
 
 function emergencyDecision(player, world) {
-  const { ball } = world;
-  if (Math.sign(ball.vz) !== world.defendZSign) return null;
-  if (Math.hypot(ball.vx, ball.vz) < 3.0 || Math.abs(ball.vz) < 1.2) return null;
-
-  const t = (world.ownGoalZ - ball.z) / ball.vz;
-  if (t < 0 || t > 3.2) return null;
-  const crossX = ball.x + ball.vx * t;
-  if (Math.abs(crossX) > PITCH.goalHalfWidth + 1.2) return null;
+  if (!shotThreat(world.ball, world.defendZSign, world.ownGoalZ)) return null;
+  const interceptor = world.teamState.interceptor;
+  if (interceptor && interceptor !== player) return null;
 
   const point = clampToPitch(world.myIntercept);
   return { name: 'interceptShot', target: point, move: steerToward(player.body, point) };
+}
+
+function shotThreat(ball, defendZSign, ownGoalZ) {
+  if (Math.sign(ball.vz) !== defendZSign) return false;
+  if (Math.hypot(ball.vx, ball.vz) < 3.0 || Math.abs(ball.vz) < 1.2) return false;
+
+  const t = (ownGoalZ - ball.z) / ball.vz;
+  if (t < 0 || t > 3.2) return false;
+  const crossX = ball.x + ball.vx * t;
+  return Math.abs(crossX) <= PITCH.goalHalfWidth + 1.2;
 }
 
 function mostAdvancedFreeOpponent(world) {
@@ -810,12 +998,12 @@ function travelTime(body, x, z) {
   return dist / cruise + rampUp;
 }
 
-function interceptBall(body, ball) {
+function interceptBall(body, ball, horizon = AI.interceptHorizon) {
   let t = 0;
   let point = { x: ball.x, z: ball.z };
   for (let i = 0; i < AI.interceptIterations; i++) {
     point = ballPositionAt(ball, t);
-    t = Math.min(AI.interceptHorizon, travelTime(body, point.x, point.z));
+    t = Math.min(horizon, travelTime(body, point.x, point.z));
   }
   return { time: t, x: point.x, z: point.z };
 }
@@ -936,4 +1124,12 @@ function nonZeroSign(value) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+// Deterministic hash noise in [0, 1) — keeps the sim harness reproducible (no Math.random).
+function noise01(a, b) {
+  let h = (Math.imul(a | 0, 0x9e3779b1) ^ Math.imul((b | 0) + 1, 0x85ebca6b)) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 0x2b591149) >>> 0;
+  h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
 }

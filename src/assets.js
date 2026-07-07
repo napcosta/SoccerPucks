@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { prepareSmokeTexture } from './effects.js';
+import { toonifyObject } from './toon.js';
 
 const loader = new GLTFLoader();
 const textureLoader = new THREE.TextureLoader();
@@ -27,6 +28,10 @@ export async function loadAssets() {
   pitchTexture.wrapS = THREE.RepeatWrapping;
   pitchTexture.wrapT = THREE.RepeatWrapping;
   pitchTexture.anisotropy = 8;
+
+  for (const gltf of [stadium, ball, sam, tesla, goal]) {
+    toonifyObject(gltf.scene);
+  }
 
   return {
     stadium,

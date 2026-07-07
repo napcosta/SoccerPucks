@@ -11,10 +11,11 @@ import {
   goalScored,
 } from './physics.js';
 import { readCommands } from './input.js';
-import { computeAICommands, createTeamAIState, resetTeamAIState } from './ai.js';
+import { computeAICommands, createTeamAIState, resetTeamAIState, AI_DIFFICULTY } from './ai.js';
 import { createHero } from './heroes.js';
 import { cloneHeroScene, tintHero, footLift } from './assets.js';
 import { spawnDashSmoke } from './effects.js';
+import { disableOutline } from './toon.js';
 import { DEBUG } from './debug.js';
 import { TUNING } from './tuning.js';
 
@@ -45,6 +46,7 @@ export class Game {
     inputProvider = null,
     timeLimitSeconds = MATCH.duration,
     scoreLimit = MATCH.scoreLimit,
+    aiDifficulty = 'medium',
   }) {
     this.scene = scene;
     this.camera = camera;
@@ -54,6 +56,7 @@ export class Game {
     this.localPlayerIndex = localPlayerIndex;
     this.authoritative = authoritative;
     this.inputProvider = inputProvider;
+    this.aiDifficulty = AI_DIFFICULTY[aiDifficulty] ? aiDifficulty : 'medium';
 
     this.state = 'kickoff';
     this.stateTimer = MATCH.kickoffDelay;
@@ -431,7 +434,19 @@ export class Game {
       defendZSign: Math.sign(p.spawnZ),
       teamState: this.teamAIState(p.team),
       tick: this.aiTick,
+      profile: this.aiProfileFor(p),
     });
+  }
+
+  // AI on the human's team never drops below medium — an easy teammate is
+  // frustration for the human, not challenge.
+  aiProfileFor(p) {
+    const selected = AI_DIFFICULTY[this.aiDifficulty];
+    const hasHumanTeammate = this.players.some(
+      (other) => other.team === p.team && other.control !== 'ai' && isPlayerActive(other)
+    );
+    if (hasHumanTeammate && selected.key === 'easy') return AI_DIFFICULTY.medium;
+    return selected;
   }
 
   teamAIState(team) {
@@ -651,7 +666,9 @@ export class Game {
 
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.4, 0.55, 32),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+      disableOutline(
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+      )
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(player.body.x, 0.05, player.body.z);
@@ -1033,39 +1050,45 @@ function createTeslaAntennaFX(mesh) {
 
   const core = new THREE.Mesh(
     new THREE.SphereGeometry(0.07 * localScale, 18, 12),
-    new THREE.MeshBasicMaterial({
-      color: glowColor,
-      transparent: true,
-      opacity: 0.9,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
+    disableOutline(
+      new THREE.MeshBasicMaterial({
+        color: glowColor,
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    )
   );
   group.add(core);
 
   const halo = new THREE.Mesh(
     new THREE.SphereGeometry(0.34 * localScale, 28, 16),
-    new THREE.MeshBasicMaterial({
-      color: 0x65ddff,
-      transparent: true,
-      opacity: 0.2,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
+    disableOutline(
+      new THREE.MeshBasicMaterial({
+        color: 0x65ddff,
+        transparent: true,
+        opacity: 0.2,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    )
   );
   group.add(halo);
 
   const rings = [0, 1, 2].map((i) => {
     const ring = new THREE.Mesh(
       new THREE.RingGeometry((0.15 + i * 0.045) * localScale, (0.165 + i * 0.045) * localScale, 56),
-      new THREE.MeshBasicMaterial({
-        color: glowColor,
-        transparent: true,
-        opacity: 0.28,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      })
+      disableOutline(
+        new THREE.MeshBasicMaterial({
+          color: glowColor,
+          transparent: true,
+          opacity: 0.28,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        })
+      )
     );
     ring.rotation.set(i === 1 ? Math.PI / 2 : 0.45, i === 2 ? Math.PI / 2 : 0, i * 0.9);
     group.add(ring);

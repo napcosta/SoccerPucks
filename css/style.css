@@ -124,7 +124,8 @@ html, body {
   color: #9fb0d0;
 }
 
-#local-format {
+#local-format,
+#local-difficulty {
   width: 100%;
 }
 
@@ -136,7 +137,8 @@ html, body {
   padding: 2px 0;
 }
 
-#local-format-label {
+#local-format-label,
+#local-difficulty-label {
   color: #aab4cc;
   font-size: 12px;
   font-weight: 800;
@@ -147,6 +149,13 @@ html, body {
 #local-size-pick {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  max-width: 360px;
+}
+
+#local-difficulty-pick {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   max-width: 360px;
 }
@@ -1030,6 +1039,10 @@ html, body {
 
   #local-size-pick {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #local-difficulty-pick {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .primary-btn,

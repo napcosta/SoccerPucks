@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { PITCH, GOAL } from './constants.js';
 import { footLift } from './assets.js';
 import { createScoreboard } from './scoreboard.js';
+import { toonGradientMap, disableOutline } from './toon.js';
 
 export function createRenderer(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -47,7 +48,9 @@ export function buildWorld(assets) {
   fill.position.set(-18, 20, -10);
   scene.add(fill);
 
-  const groundMat = new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 1 });
+  const groundMat = disableOutline(
+    new THREE.MeshToonMaterial({ color: 0x2a2d33, gradientMap: toonGradientMap() })
+  );
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(52, 42), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.06;
@@ -56,11 +59,12 @@ export function buildWorld(assets) {
 
   const pitchTex = assets.pitchTexture;
   pitchTex.repeat.set(2, 3);
-  const pitchMat = new THREE.MeshStandardMaterial({
-    map: pitchTex,
-    roughness: 0.35,
-    metalness: 0.05,
-  });
+  const pitchMat = disableOutline(
+    new THREE.MeshToonMaterial({
+      map: pitchTex,
+      gradientMap: toonGradientMap(),
+    })
+  );
   const pitch = new THREE.Mesh(
     new THREE.PlaneGeometry(PITCH.halfWidth * 2, (PITCH.halfLength + PITCH.goalDepth) * 2),
     pitchMat
@@ -92,12 +96,14 @@ export function buildWorld(assets) {
 function addSkybox(scene) {
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(170, 48, 24),
-    new THREE.MeshBasicMaterial({
-      map: createSkyboxTexture(),
-      side: THREE.BackSide,
-      fog: false,
-      depthWrite: false,
-    })
+    disableOutline(
+      new THREE.MeshBasicMaterial({
+        map: createSkyboxTexture(),
+        side: THREE.BackSide,
+        fog: false,
+        depthWrite: false,
+      })
+    )
   );
   sky.frustumCulled = false;
   sky.renderOrder = -100;
@@ -162,7 +168,7 @@ function drawCloudBand(ctx, width, height, yFraction, count, opacity, seed) {
 }
 
 function addMarkings(scene) {
-  const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const lineMat = disableOutline(new THREE.MeshBasicMaterial({ color: 0xffffff }));
   const y = 0.012;
 
   const centerLine = new THREE.Mesh(
@@ -195,13 +201,15 @@ function addMarkings(scene) {
 }
 
 function addWalls(scene) {
-  const wallMat = new THREE.MeshStandardMaterial({
-    color: 0x9fc4e8,
-    transparent: true,
-    opacity: 0.28,
-    roughness: 0.2,
-  });
-  const trimMat = new THREE.MeshStandardMaterial({ color: 0x35506e, roughness: 0.6 });
+  const wallMat = disableOutline(
+    new THREE.MeshToonMaterial({
+      color: 0x9fc4e8,
+      gradientMap: toonGradientMap(),
+      transparent: true,
+      opacity: 0.28,
+    })
+  );
+  const trimMat = new THREE.MeshToonMaterial({ color: 0x35506e, gradientMap: toonGradientMap() });
 
   const h = PITCH.wallHeight;
   const t = 0.18;
@@ -234,10 +242,9 @@ function addGoals(scene, goalGltf) {
     goal.traverse((node) => {
       if (node.isMesh) {
         node.castShadow = true;
-        node.material = new THREE.MeshStandardMaterial({
+        node.material = new THREE.MeshToonMaterial({
           color: sign > 0 ? 0xd94f43 : 0x4a7ee0,
-          roughness: 0.4,
-          metalness: 0.3,
+          gradientMap: toonGradientMap(),
         });
       }
     });

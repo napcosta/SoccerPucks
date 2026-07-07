@@ -5,6 +5,7 @@ $mime = @{
   '.html' = 'text/html; charset=utf-8'
   '.css'  = 'text/css; charset=utf-8'
   '.js'   = 'text/javascript; charset=utf-8'
+  '.mjs'  = 'text/javascript; charset=utf-8'
   '.json' = 'application/json; charset=utf-8'
   '.png'  = 'image/png'
   '.jpg'  = 'image/jpeg'
@@ -61,48 +62,53 @@ Write-Host "Open $url"
 Write-Host 'Press Ctrl+C to stop.'
 Start-Process $url
 
+function Send-Response($request, $response, [int]$status, [byte[]]$bytes) {
+  $response.StatusCode = $status
+  $response.ContentLength64 = $bytes.Length
+  if ($request.HttpMethod -ne 'HEAD') {
+    $response.OutputStream.Write($bytes, 0, $bytes.Length)
+  }
+  $response.Close()
+}
+
 try {
   while ($listener.IsListening) {
     $context = $listener.GetContext()
     $request = $context.Request
     $response = $context.Response
 
-    $localPath = Get-LocalPath $request.Url.AbsolutePath
-    $resolved = [IO.Path]::GetFullPath($localPath)
-    $rootFull = [IO.Path]::GetFullPath($root)
+    try {
+      $localPath = Get-LocalPath $request.Url.AbsolutePath
+      $resolved = [IO.Path]::GetFullPath($localPath)
+      $rootFull = [IO.Path]::GetFullPath($root)
 
-    if (-not $resolved.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
-      $response.StatusCode = 403
-      $bytes = [Text.Encoding]::UTF8.GetBytes('403 Forbidden')
-      $response.OutputStream.Write($bytes, 0, $bytes.Length)
-      $response.Close()
-      continue
+      if (-not $resolved.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
+        Send-Response $request $response 403 ([Text.Encoding]::UTF8.GetBytes('403 Forbidden'))
+        continue
+      }
+
+      if (Test-Path $resolved -PathType Container) {
+        $index = Join-Path $resolved 'index.html'
+        if (Test-Path $index) { $resolved = $index }
+      }
+
+      if (-not (Test-Path $resolved -PathType Leaf)) {
+        Send-Response $request $response 404 ([Text.Encoding]::UTF8.GetBytes('404 Not Found'))
+        Write-Host "404 $($request.Url.LocalPath)"
+        continue
+      }
+
+      $ext = [IO.Path]::GetExtension($resolved).ToLowerInvariant()
+      if ($mime.ContainsKey($ext)) {
+        $response.ContentType = $mime[$ext]
+      }
+
+      Send-Response $request $response 200 ([IO.File]::ReadAllBytes($resolved))
+      Write-Host "200 $($request.HttpMethod) $($request.Url.LocalPath)"
+    } catch {
+      Write-Host "ERR $($request.Url.LocalPath): $($_.Exception.Message)"
+      try { $response.Abort() } catch {}
     }
-
-    if (Test-Path $resolved -PathType Container) {
-      $index = Join-Path $resolved 'index.html'
-      if (Test-Path $index) { $resolved = $index }
-    }
-
-    if (-not (Test-Path $resolved -PathType Leaf)) {
-      $response.StatusCode = 404
-      $bytes = [Text.Encoding]::UTF8.GetBytes('404 Not Found')
-      $response.OutputStream.Write($bytes, 0, $bytes.Length)
-      $response.Close()
-      Write-Host "404 $($request.Url.LocalPath)"
-      continue
-    }
-
-    $ext = [IO.Path]::GetExtension($resolved).ToLowerInvariant()
-    if ($mime.ContainsKey($ext)) {
-      $response.ContentType = $mime[$ext]
-    }
-
-    $bytes = [IO.File]::ReadAllBytes($resolved)
-    $response.ContentLength64 = $bytes.Length
-    $response.OutputStream.Write($bytes, 0, $bytes.Length)
-    $response.Close()
-    Write-Host "200 $($request.Url.LocalPath)"
   }
 } finally {
   if ($listener.IsListening) { $listener.Stop() }
