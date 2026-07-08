@@ -38,6 +38,8 @@ const canvas = document.getElementById('game-canvas');
 const menu = document.getElementById('menu');
 const hudRoot = document.getElementById('hud');
 const loading = document.getElementById('loading');
+const loadingText = document.getElementById('loading-text');
+const matchHint = document.getElementById('match-hint');
 
 const nicknameInput = document.getElementById('nickname-input');
 const heroPick = document.getElementById('hero-pick');
@@ -82,6 +84,7 @@ const hostLeaveBtn = document.getElementById('host-leave-btn');
 
 const hud = {
   powerFill: document.getElementById('power-fill'),
+  powerWrap: document.getElementById('power-wrap'),
   banner: document.getElementById('banner'),
 };
 
@@ -164,7 +167,7 @@ window.addEventListener('resize', () => {
 async function ensureAssets() {
   if (assets) return;
   loading.classList.remove('hidden');
-  loading.textContent = 'Loading stadium...';
+  loadingText.textContent = 'Loading stadium...';
   assets = await loadAssets();
   ({ scene, scoreboard } = buildWorld(assets, outlineEffect));
   loading.classList.add('hidden');
@@ -279,7 +282,7 @@ async function watchAiScenario(scenario) {
   try {
     await ensureAssets();
   } catch (err) {
-    loading.textContent = 'Failed to load assets - serve this folder over HTTP.';
+    loadingText.textContent = 'Failed to load assets - serve this folder over HTTP.';
     console.error(err);
     return;
   }
@@ -363,7 +366,7 @@ async function startLocalMatch() {
   try {
     await ensureAssets();
   } catch (err) {
-    loading.textContent = 'Failed to load assets - serve this folder over HTTP.';
+    loadingText.textContent = 'Failed to load assets - serve this folder over HTTP.';
     console.error(err);
     return;
   }
@@ -545,7 +548,7 @@ async function startOnlineGame(role, players, localPlayerIndex = role === 'host'
   try {
     await ensureAssets();
   } catch (err) {
-    loading.textContent = 'Failed to load assets - serve this folder over HTTP.';
+    loadingText.textContent = 'Failed to load assets - serve this folder over HTTP.';
     throw err;
   }
 
@@ -594,6 +597,7 @@ async function startOnlineGame(role, players, localPlayerIndex = role === 'host'
 function enterGameView() {
   closeHostPanel({ focusCanvas: false });
   menu.classList.add('hidden');
+  matchHint.classList.add('hidden');
   hudRoot.classList.remove('hidden');
   document.activeElement?.blur?.();
   canvas.focus?.();
@@ -887,6 +891,7 @@ function setHostPanelStatus(text) {
 function installEditableMatchEndHandler() {
   if (!game) return;
   game.onMatchEnd = handleEditableMatchFinished;
+  matchHint.classList.remove('hidden');
 }
 
 function handleEditableMatchFinished() {

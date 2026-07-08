@@ -710,6 +710,7 @@ export class Game {
     const local = this.players[this.localPlayerIndex] ?? this.players[0];
     const powerFraction = local && isPlayerActive(local) ? local.hero.cooldownFraction : 0;
     this.hud.powerFill.style.width = `${powerFraction * 100}%`;
+    this.hud.powerWrap?.classList.toggle('ready', powerFraction >= 1);
   }
 
   showBanner(text, duration, color = '#ffffff') {

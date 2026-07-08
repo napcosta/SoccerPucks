@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Soccer Pucks</title>
-<link rel="stylesheet" href="css/style.css?v=local-teams-1" />
+<link rel="stylesheet" href="css/style.css?v=ui-polish-1" />
 <script type="importmap">
 {
   "imports": {
@@ -18,7 +18,11 @@
 <canvas id="game-canvas" tabindex="-1"></canvas>
 
 <div id="hud" class="hidden">
-  <div id="power-bar"><div id="power-fill"></div></div>
+  <div id="power-wrap">
+    <span id="power-label">Power</span>
+    <div id="power-bar"><div id="power-fill"></div></div>
+  </div>
+  <div id="match-hint" class="hidden"><kbd>Esc</kbd> Match settings</div>
   <div id="banner" class="hidden"></div>
 </div>
 
@@ -70,17 +74,19 @@
 
 <div id="menu">
   <h1>SOCCER PUCKS</h1>
-  <p class="subtitle">3D arcade ball - pick your hero</p>
+  <p class="subtitle">3D arcade soccer &mdash; pick your hero</p>
   <label id="nickname-field">
     <span>Nickname</span>
     <input id="nickname-input" type="text" maxlength="16" spellcheck="false" autocomplete="off" />
   </label>
   <div id="hero-pick">
     <button class="hero-btn selected" data-hero="sam">
+      <span class="hero-icon" aria-hidden="true">&#x1F4A8;</span>
       <span class="hero-name">Sam</span>
       <span class="hero-power">Power: Dash</span>
     </button>
     <button class="hero-btn" data-hero="tesla">
+      <span class="hero-icon" aria-hidden="true">&#x26A1;</span>
       <span class="hero-name">Tesla</span>
       <span class="hero-power">Power: Magnet</span>
     </button>
@@ -178,11 +184,18 @@
       <button id="cancel-online-btn" class="tiny-btn danger-btn">Cancel</button>
     </div>
   </div>
-  <p class="controls-hint">WASD / Arrows to move &nbsp;&middot;&nbsp; Space to shoot &nbsp;&middot;&nbsp; Shift for power</p>
+  <p class="controls-hint">
+    <span class="hint-item"><kbd>WASD</kbd> / <kbd>&#8592;&#8593;&#8595;&#8594;</kbd> move</span>
+    <span class="hint-item"><kbd>Space</kbd> shoot</span>
+    <span class="hint-item"><kbd>Shift</kbd> power</span>
+  </p>
   <button id="ai-test-btn" class="debug-link" type="button">AI sim tests</button>
 </div>
 
-<div id="loading" class="hidden">Loading stadium...</div>
+<div id="loading" class="hidden">
+  <div class="loading-spinner" aria-hidden="true"></div>
+  <span id="loading-text">Loading stadium...</span>
+</div>
 
 <script type="module" src="src/main.js"></script>
 </body>
