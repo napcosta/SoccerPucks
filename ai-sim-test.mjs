@@ -4,6 +4,7 @@ import {
   integrate,
   clampSpeed,
   collideWalls,
+  collidePlayerBounds,
   collideGoalPosts,
   collideCircles,
   isTouching,
@@ -130,7 +131,7 @@ export function runMatch(label, specs, seconds = 180) {
       p.hero.update(dt, { ...raw, powerPressed }, ball);
 
       integrate(p.body, dt, TUNING.player.damping);
-      collideWalls(p.body, 0.2);
+      collidePlayerBounds(p.body, 0.2);
       collideGoalPosts(p.body, 0.2);
 
       const fx = ball.x - p.body.x;

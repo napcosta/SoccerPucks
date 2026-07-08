@@ -5,6 +5,7 @@ import {
   integrate,
   clampSpeed,
   collideWalls,
+  collidePlayerBounds,
   collideGoalPosts,
   collideCircles,
   isTouching,
@@ -14,12 +15,16 @@ import { readCommands } from './input.js';
 import { computeAICommands, createTeamAIState, resetTeamAIState, AI_DIFFICULTY } from './ai.js';
 import { createHero } from './heroes.js';
 import { cloneHeroScene, tintHero, footLift } from './assets.js';
-import { spawnDashSmoke, createMagnetFieldFX } from './effects.js';
+import { spawnDashSmoke, createMagnetFieldFX, spawnForceFieldFX } from './effects.js';
 import { disableOutline } from './toon.js';
 import { DEBUG } from './debug.js';
 import { TUNING } from './tuning.js';
 
 const SPAWN_Z = 7.8;
+// Ball-into-wall speed below which no force field shows (rolling along the
+// wall shouldn't strobe), and the speed at which the effect reaches full size.
+const WALL_FX_MIN_IMPACT = 2;
+const WALL_FX_MAX_IMPACT = 10;
 const EMPTY_SCREEN_COMMANDS = Object.freeze({ moveX: 0, moveZ: 0, shoot: false, power: false });
 const REMOTE_HERO_VISUAL = Object.freeze({
   lead: 0.05,
@@ -74,6 +79,7 @@ export class Game {
     this.activeBanner = { visible: false, text: '', color: '#ffffff' };
     this.lastSnapshotSeq = 0;
     this.onFxEvent = null;
+    this.onWallFxEvent = null;
 
     this.ball = this.createBall();
     const specs =
@@ -481,7 +487,7 @@ export class Game {
     body.vx += raw.moveX * player.accel * dt;
     body.vz += raw.moveZ * player.accel * dt;
     integrate(body, dt, player.damping);
-    collideWalls(body, 0.2);
+    collidePlayerBounds(body, 0.2);
     collideGoalPosts(body, 0.2);
   }
 
@@ -508,7 +514,7 @@ export class Game {
       p.hero.update(dt, { ...raw, powerPressed }, ballBody);
 
       integrate(body, dt, player.damping);
-      collideWalls(body, 0.2);
+      collidePlayerBounds(body, 0.2);
       collideGoalPosts(body, 0.2);
 
       updateFacingTowardBall(p, ballBody);
@@ -530,7 +536,9 @@ export class Game {
 
     integrate(ballBody, dt, ball.damping);
     clampSpeed(ballBody, ball.maxSpeed);
-    collideWalls(ballBody, ball.wallRestitution);
+    // Only the ball raises the force field — players use collidePlayerBounds.
+    const wallHit = collideWalls(ballBody, ball.wallRestitution);
+    if (wallHit && wallHit.impact >= WALL_FX_MIN_IMPACT) this.spawnWallImpactFX(wallHit);
     collideGoalPosts(ballBody, ball.wallRestitution);
 
     for (const p of this.players) {
@@ -664,6 +672,43 @@ export class Game {
         range: p.hero?.def?.magnetRange ?? 3,
       });
     }
+  }
+
+  // Host detects the hit in simulate(); guests replay it from the 'wallFx'
+  // network message — they never run ball physics themselves.
+  spawnWallImpactFX(hit, fromNetwork = false) {
+    if (!fromNetwork) this.onWallFxEvent?.(hit);
+    const strength = Math.min(
+      1,
+      Math.max(0, (hit.impact - WALL_FX_MIN_IMPACT) / (WALL_FX_MAX_IMPACT - WALL_FX_MIN_IMPACT))
+    );
+
+    // Clamp the shield panel to the wall segment that was hit, sliding its
+    // center away from corners so it never extends past the wall's ends.
+    const [a, b] = wallSegmentEndpoints(hit);
+    const dirX = hit.nz;
+    const dirZ = -hit.nx;
+    const alongA = a.x * dirX + a.z * dirZ;
+    const alongB = b.x * dirX + b.z * dirZ;
+    const min = Math.min(alongA, alongB);
+    const max = Math.max(alongA, alongB);
+    const along = hit.x * dirX + hit.z * dirZ;
+    const halfWidth = Math.min(2.6, (max - min) / 2);
+    const center = clamp(along, min + halfWidth, max - halfWidth);
+
+    this.effects.push(
+      spawnForceFieldFX(this.scene, {
+        x: hit.x + dirX * (center - along),
+        z: hit.z + dirZ * (center - along),
+        nx: hit.nx,
+        nz: hit.nz,
+        width: halfWidth * 2,
+        height: PITCH.wallHeight,
+        impactU: along - center,
+        impactY: BALL.radius,
+        strength,
+      })
+    );
   }
 
   spawnPowerFX(player, type, fromNetwork = false) {
@@ -1040,6 +1085,40 @@ function normalizeTeamValue(team, fallback = TEAM.RED) {
 function finiteOr(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+// The two endpoints of the wall run a ball-wall hit landed on, used to keep
+// the force field panel from poking past corners or into the goal mouth.
+function wallSegmentEndpoints(hit) {
+  const { halfWidth, halfLength, goalHalfWidth, goalDepth } = PITCH;
+
+  if (hit.nz !== 0) {
+    // End wall (z = ±halfLength beside the goal) or the goal's back wall.
+    if (Math.abs(hit.x) >= goalHalfWidth) {
+      const side = Math.sign(hit.x);
+      return [
+        { x: side * goalHalfWidth, z: hit.z },
+        { x: side * halfWidth, z: hit.z },
+      ];
+    }
+    return [
+      { x: -goalHalfWidth, z: hit.z },
+      { x: goalHalfWidth, z: hit.z },
+    ];
+  }
+
+  // Full-length side wall, or the short side wall inside the goal mouth.
+  if (Math.abs(hit.x) >= halfWidth - 1e-6) {
+    return [
+      { x: hit.x, z: -halfLength },
+      { x: hit.x, z: halfLength },
+    ];
+  }
+  const side = Math.sign(hit.z);
+  return [
+    { x: hit.x, z: side * halfLength },
+    { x: hit.x, z: side * (halfLength + goalDepth) },
+  ];
 }
 
 function clamp(value, min, max) {

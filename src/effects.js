@@ -141,7 +141,8 @@ const MAGNET_WAVE_PERIOD = 0.55;
 const MAGNET_RING_COUNT = 3;
 const MAGNET_RING_PERIOD = 0.7;
 
-function magnetMaterial(color) {
+// Flat cartoon FX material: normal blending, starts invisible, no outline.
+function flatFXMaterial(color) {
   return disableOutline(
     new THREE.MeshBasicMaterial({
       color,
@@ -166,20 +167,20 @@ export function createMagnetFieldFX(scene) {
   // yawed each frame so it faces the pull direction.
   const waves = Array.from({ length: MAGNET_WAVE_COUNT }, () => {
     const geometry = new THREE.TorusGeometry(0.7, 0.1, 8, 24, Math.PI);
-    const mesh = new THREE.Mesh(geometry, magnetMaterial(MAGNET_COLOR));
+    const mesh = new THREE.Mesh(geometry, flatFXMaterial(MAGNET_COLOR));
     group.add(mesh);
     return mesh;
   });
 
   const rings = Array.from({ length: MAGNET_RING_COUNT }, (_, i) => {
-    const mesh = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 48), magnetMaterial(MAGNET_COLOR));
+    const mesh = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 48), flatFXMaterial(MAGNET_COLOR));
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.y = 0.045 + i * 0.005;
     group.add(mesh);
     return mesh;
   });
 
-  const halo = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), magnetMaterial(MAGNET_HALO));
+  const halo = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), flatFXMaterial(MAGNET_HALO));
   group.add(halo);
 
   return {
@@ -242,6 +243,136 @@ export function createMagnetFieldFX(scene) {
         mesh.geometry.dispose();
         mesh.material.dispose();
       }
+    },
+  };
+}
+
+const FIELD_DURATION = 0.65;
+const FIELD_COLOR = new THREE.Color(0x55d9ff);
+const FIELD_FLASH = new THREE.Color(0xeaffff);
+
+// The panel flexes into the pitch around the impact and springs back.
+const FIELD_VERT = /* glsl */ `
+  uniform float uTime;
+  uniform float uStrength;
+  uniform vec2 uImpact;
+  varying vec2 vPos;
+  void main() {
+    vPos = position.xy;
+    vec3 p = position;
+    float d = distance(position.xy, uImpact);
+    float spring = 1.0 - smoothstep(0.0, 0.4, uTime);
+    p.z += exp(-d * d * 3.0) * 0.2 * uStrength * spring;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+  }
+`;
+
+// Hex-cell energy shield: whole cells pop alight as a ripple sweeps out from
+// the impact point, over a white shock core, all fading toward the panel
+// borders so the field never spills past the wall.
+const FIELD_FRAG = /* glsl */ `
+  uniform float uTime;
+  uniform float uDuration;
+  uniform float uStrength;
+  uniform vec2 uImpact;
+  uniform vec2 uSize;
+  uniform vec3 uColor;
+  uniform vec3 uFlash;
+  varying vec2 vPos;
+
+  float hexDist(vec2 p) {
+    p = abs(p);
+    return max(dot(p, vec2(0.5, 0.8660254)), p.x);
+  }
+
+  // Returns (offset within cell, cell id) for a pointy-top hex tiling.
+  vec4 hexCoords(vec2 uv) {
+    const vec2 s = vec2(1.0, 1.7320508);
+    vec2 a = mod(uv, s) - s * 0.5;
+    vec2 b = mod(uv - s * 0.5, s) - s * 0.5;
+    vec2 gv = dot(a, a) < dot(b, b) ? a : b;
+    return vec4(gv, uv - gv);
+  }
+
+  void main() {
+    float t = uTime / uDuration;
+    float fade = (1.0 - t) * (1.0 - t);
+
+    const float cell = 0.24;
+    vec4 h = hexCoords(vPos / cell);
+    vec2 cellCenter = h.zw * cell;
+    float edge = smoothstep(0.36, 0.48, hexDist(h.xy));
+
+    // Ripple front sampled per-cell so hexes light up one by one.
+    float cellD = distance(cellCenter, uImpact);
+    float maxR = 1.4 + 2.0 * uStrength;
+    float front = maxR * (1.0 - (1.0 - t) * (1.0 - t));
+    float wave = exp(-5.0 * abs(cellD - front));
+    float afterglow = max(0.0, 1.0 - cellD / maxR) * 0.3;
+    float cells = (wave + afterglow) * fade;
+
+    // Un-quantized white core right where the ball struck.
+    float d = distance(vPos, uImpact);
+    float core = exp(-d * d * 8.0) * exp(-uTime * 9.0) * (1.0 + uStrength);
+
+    // Soft fade at the panel borders; the geometry itself already stops at
+    // the wall's real top, bottom, and ends.
+    vec2 hs = uSize * 0.5;
+    float border = smoothstep(0.0, 0.5, hs.x - abs(vPos.x))
+                 * smoothstep(0.0, 0.1, hs.y - abs(vPos.y));
+
+    float glow = edge * cells * (1.2 + 0.8 * uStrength) + cells * 0.12 + core;
+    vec3 col = uColor * (edge * cells * (1.2 + 0.8 * uStrength) + cells * 0.12) + uFlash * core;
+    gl_FragColor = vec4(col, clamp(glow, 0.0, 1.0) * border);
+  }
+`;
+
+// "Force field" reveal where the ball slams into a wall: an invisible energy
+// barrier flush with the wall lights up. The panel is exactly wall-height and
+// clamped to the wall segment it lives on, so the effect never leaves the
+// wall. opts: { x, z } panel center on the wall plane, { nx, nz } inward
+// normal, width/height panel size, { impactU, impactY } impact point in panel
+// local coords, strength 0..1.
+export function spawnForceFieldFX(scene, { x, z, nx, nz, width, height, impactU, impactY, strength = 1 }) {
+  const material = disableOutline(
+    new THREE.ShaderMaterial({
+      vertexShader: FIELD_VERT,
+      fragmentShader: FIELD_FRAG,
+      uniforms: {
+        uTime: { value: 0 },
+        uDuration: { value: FIELD_DURATION },
+        uStrength: { value: strength },
+        uImpact: { value: new THREE.Vector2(impactU, impactY - height / 2) },
+        uSize: { value: new THREE.Vector2(width, height) },
+        uColor: { value: FIELD_COLOR },
+        uFlash: { value: FIELD_FLASH },
+      },
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height, 48, 12), material);
+  mesh.name = 'ForceFieldFX';
+  // Local +Z faces into the pitch; nudge off the wall so it never z-fights.
+  mesh.position.set(x + nx * 0.06, height / 2, z + nz * 0.06);
+  mesh.rotation.y = Math.atan2(nx, nz);
+  scene.add(mesh);
+
+  return {
+    time: 0,
+    update(dt) {
+      this.time += dt;
+      if (this.time >= FIELD_DURATION) return false;
+      material.uniforms.uTime.value = this.time;
+      return true;
+    },
+    dispose(targetScene) {
+      targetScene.remove(mesh);
+      mesh.geometry.dispose();
+      material.dispose();
     },
   };
 }

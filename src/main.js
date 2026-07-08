@@ -499,6 +499,8 @@ function handleOnlineMessage(role, message, connectionId) {
   } else if (message.type === 'fx' && game) {
     const player = game.players[message.playerIndex];
     if (player) game.spawnPowerFX(player, message.fxType, true);
+  } else if (message.type === 'wallFx' && game) {
+    if (message.hit) game.spawnWallImpactFX(message.hit, true);
   } else if (message.type === 'matchEnded') {
     returnToMenu();
   }
@@ -579,6 +581,9 @@ async function startOnlineGame(role, players, localPlayerIndex = role === 'host'
   if (role === 'host') {
     game.onFxEvent = (playerIndex, fxType) => {
       onlineSession?.send({ type: 'fx', playerIndex, fxType });
+    };
+    game.onWallFxEvent = (hit) => {
+      onlineSession?.send({ type: 'wallFx', hit });
     };
     installEditableMatchEndHandler();
   }

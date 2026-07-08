@@ -7,6 +7,7 @@ export const PITCH = {
   goalDepth: 1.6 * GOAL_SCALE,
   wallHeight: 1.0,
   surfaceY: 0.015,
+  playerBoundsMargin: 3,
 };
 
 export const GOAL = {

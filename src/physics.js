@@ -30,14 +30,28 @@ function inGoalMouth(x) {
   return Math.abs(x) < PITCH.goalHalfWidth;
 }
 
+// Returns the strongest wall hit this frame as { x, z, nx, nz, impact } —
+// contact point on the wall plane, inward-facing normal, and the pre-bounce
+// speed into the wall — or null when nothing was hit.
 export function collideWalls(body, restitution) {
+  let hit = null;
+  const recordHit = (x, z, nx, nz, impact) => {
+    if (!hit || impact > hit.impact) hit = { x, z, nx, nz, impact };
+  };
+
   const maxX = PITCH.halfWidth - body.radius;
   if (body.x > maxX) {
     body.x = maxX;
-    if (body.vx > 0) body.vx = -body.vx * restitution;
+    if (body.vx > 0) {
+      recordHit(PITCH.halfWidth, body.z, -1, 0, body.vx);
+      body.vx = -body.vx * restitution;
+    }
   } else if (body.x < -maxX) {
     body.x = -maxX;
-    if (body.vx < 0) body.vx = -body.vx * restitution;
+    if (body.vx < 0) {
+      recordHit(-PITCH.halfWidth, body.z, 1, 0, -body.vx);
+      body.vx = -body.vx * restitution;
+    }
   }
 
   const maxZ = PITCH.halfLength - body.radius;
@@ -46,21 +60,58 @@ export function collideWalls(body, restitution) {
 
   if (body.z > limitZ) {
     body.z = limitZ;
-    if (body.vz > 0) body.vz = -body.vz * restitution;
+    if (body.vz > 0) {
+      recordHit(body.x, limitZ + body.radius, 0, -1, body.vz);
+      body.vz = -body.vz * restitution;
+    }
   } else if (body.z < -limitZ) {
     body.z = -limitZ;
-    if (body.vz < 0) body.vz = -body.vz * restitution;
+    if (body.vz < 0) {
+      recordHit(body.x, -limitZ - body.radius, 0, 1, -body.vz);
+      body.vz = -body.vz * restitution;
+    }
   }
 
   if (inMouth && Math.abs(body.z) > maxZ) {
     const sideMax = PITCH.goalHalfWidth - body.radius;
     if (body.x > sideMax) {
       body.x = sideMax;
-      if (body.vx > 0) body.vx = -body.vx * restitution;
+      if (body.vx > 0) {
+        recordHit(PITCH.goalHalfWidth, body.z, -1, 0, body.vx);
+        body.vx = -body.vx * restitution;
+      }
     } else if (body.x < -sideMax) {
       body.x = -sideMax;
-      if (body.vx < 0) body.vx = -body.vx * restitution;
+      if (body.vx < 0) {
+        recordHit(-PITCH.goalHalfWidth, body.z, 1, 0, -body.vx);
+        body.vx = -body.vx * restitution;
+      }
     }
+  }
+
+  return hit;
+}
+
+// Players pass through the ring walls (the walls only stop the ball); this
+// outer rectangle keeps them from wandering off the stadium floor.
+export function collidePlayerBounds(body, restitution) {
+  const margin = PITCH.playerBoundsMargin;
+  const maxX = PITCH.halfWidth + margin - body.radius;
+  if (body.x > maxX) {
+    body.x = maxX;
+    if (body.vx > 0) body.vx = -body.vx * restitution;
+  } else if (body.x < -maxX) {
+    body.x = -maxX;
+    if (body.vx < 0) body.vx = -body.vx * restitution;
+  }
+
+  const maxZ = PITCH.halfLength + PITCH.goalDepth + margin - body.radius;
+  if (body.z > maxZ) {
+    body.z = maxZ;
+    if (body.vz > 0) body.vz = -body.vz * restitution;
+  } else if (body.z < -maxZ) {
+    body.z = -maxZ;
+    if (body.vz < 0) body.vz = -body.vz * restitution;
   }
 }
 

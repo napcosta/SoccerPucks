@@ -12,6 +12,18 @@
       "runtimeExecutable": "powershell",
       "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "../serve.ps1", "-Port", "8127"],
       "port": 8127
+    },
+    {
+      "name": "soccerpucks-alt2",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "../serve.ps1", "-Port", "8128"],
+      "port": 8128
+    },
+    {
+      "name": "soccerpucks-alt3",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "../serve.ps1", "-Port", "8129"],
+      "port": 8129
     }
   ]
 }
