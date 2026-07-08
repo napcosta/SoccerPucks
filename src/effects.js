@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { disableOutline } from './toon.js';
 
 const SMOKE_FRAMES = 4;
 
@@ -129,4 +130,118 @@ export function spawnDashSmoke(scene, texture, x, z, dirX, dirZ) {
   }
 
   return burst;
+}
+
+// Solid saturated blue with normal blending — additive glows wash out against
+// the bright ice, so the field is drawn as flat cartoon shapes instead.
+const MAGNET_COLOR = 0x2e6bff;
+const MAGNET_HALO = 0x7fd0ff;
+const MAGNET_WAVE_COUNT = 4;
+const MAGNET_WAVE_PERIOD = 0.55;
+const MAGNET_RING_COUNT = 3;
+const MAGNET_RING_PERIOD = 0.7;
+
+function magnetMaterial(color) {
+  return disableOutline(
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+}
+
+// Persistent cartoon "magnetic field" for Tesla's power: arc-shaped attraction
+// waves that ride the line from the ball to the player, suction rings that
+// collapse into the player along the ground, and a grip halo on a captured ball.
+export function createMagnetFieldFX(scene) {
+  const group = new THREE.Group();
+  group.name = 'MagnetFieldFX';
+  group.visible = false;
+  scene.add(group);
+
+  // Upper semicircle in the XY plane: a standing arch the ball slides under,
+  // yawed each frame so it faces the pull direction.
+  const waves = Array.from({ length: MAGNET_WAVE_COUNT }, () => {
+    const geometry = new THREE.TorusGeometry(0.7, 0.1, 8, 24, Math.PI);
+    const mesh = new THREE.Mesh(geometry, magnetMaterial(MAGNET_COLOR));
+    group.add(mesh);
+    return mesh;
+  });
+
+  const rings = Array.from({ length: MAGNET_RING_COUNT }, (_, i) => {
+    const mesh = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 48), magnetMaterial(MAGNET_COLOR));
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = 0.045 + i * 0.005;
+    group.add(mesh);
+    return mesh;
+  });
+
+  const halo = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), magnetMaterial(MAGNET_HALO));
+  group.add(halo);
+
+  return {
+    group,
+    time: 0,
+    intensity: 0,
+    update(dt, { active, captured, playerX, playerZ, ballX, ballY, ballZ, ballRadius, range }) {
+      this.time += dt;
+      const target = active ? 1 : 0;
+      this.intensity += (target - this.intensity) * Math.min(1, dt * 12);
+      if (!active && this.intensity < 0.02) {
+        this.group.visible = false;
+        return;
+      }
+      this.group.visible = true;
+      const glow = this.intensity;
+
+      for (let i = 0; i < rings.length; i++) {
+        const ring = rings[i];
+        const k = (this.time / MAGNET_RING_PERIOD + i / MAGNET_RING_COUNT) % 1;
+        const radius = range * 0.95 * (1 - k) + 0.5 * k;
+        ring.position.x = playerX;
+        ring.position.z = playerZ;
+        ring.scale.setScalar(radius);
+        ring.material.opacity = glow * 0.55 * Math.sin(Math.PI * k);
+      }
+
+      const dx = playerX - ballX;
+      const dz = playerZ - ballZ;
+      const dist = Math.hypot(dx, dz);
+      const inRange = !captured && dist > 0.001 && dist < range * 1.05;
+      // Fade the waves out when the ball is nearly touching so they don't pile up.
+      const waveFade = inRange ? Math.max(0, Math.min(1, (dist - 0.9) / 0.7)) : 0;
+      const yaw = Math.atan2(dx, dz);
+
+      for (let i = 0; i < waves.length; i++) {
+        const wave = waves[i];
+        const k = (this.time / MAGNET_WAVE_PERIOD + i / MAGNET_WAVE_COUNT) % 1;
+        wave.position.set(
+          ballX + dx * k,
+          0.02,
+          ballZ + dz * k
+        );
+        wave.rotation.y = yaw;
+        wave.scale.setScalar(1.05 - 0.5 * k);
+        wave.material.opacity = glow * waveFade * 0.9 * Math.sin(Math.PI * k);
+      }
+
+      if (captured) {
+        halo.position.set(ballX, ballY, ballZ);
+        halo.scale.setScalar(ballRadius * 1.45 * (1 + 0.12 * Math.sin(this.time * 14)));
+        halo.material.opacity = glow * 0.3;
+      } else {
+        halo.material.opacity = 0;
+      }
+    },
+    dispose(targetScene) {
+      targetScene.remove(this.group);
+      for (const mesh of [...waves, ...rings, halo]) {
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }
+    },
+  };
 }

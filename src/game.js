@@ -14,7 +14,7 @@ import { readCommands } from './input.js';
 import { computeAICommands, createTeamAIState, resetTeamAIState, AI_DIFFICULTY } from './ai.js';
 import { createHero } from './heroes.js';
 import { cloneHeroScene, tintHero, footLift } from './assets.js';
-import { spawnDashSmoke } from './effects.js';
+import { spawnDashSmoke, createMagnetFieldFX } from './effects.js';
 import { disableOutline } from './toon.js';
 import { DEBUG } from './debug.js';
 import { TUNING } from './tuning.js';
@@ -181,7 +181,10 @@ export class Game {
     };
     player.onPowerFX = (type) => this.spawnPowerFX(player, type);
     player.hero = createHero(heroKind, player);
-    if (heroKind === 'tesla') player.antennaFX = createTeslaAntennaFX(mesh);
+    if (heroKind === 'tesla') {
+      player.antennaFX = createTeslaAntennaFX(mesh);
+      player.magnetFX = createMagnetFieldFX(this.scene);
+    }
     mesh.visible = isPlayerActive(player);
     return player;
   }
@@ -330,6 +333,11 @@ export class Game {
       player.antennaFX = null;
     }
 
+    if (player.magnetFX) {
+      player.magnetFX.dispose(this.scene);
+      player.magnetFX = null;
+    }
+
     this.scene.remove(player.mesh);
 
     const gltfSource = heroGltfSource(this.assets, heroKind);
@@ -357,7 +365,10 @@ export class Game {
     player.surfaceY = surfaceY;
     player.hero = createHero(heroKind, player);
     player.onPowerFX = (type) => this.spawnPowerFX(player, type);
-    if (heroKind === 'tesla') player.antennaFX = createTeslaAntennaFX(mesh);
+    if (heroKind === 'tesla') {
+      player.antennaFX = createTeslaAntennaFX(mesh);
+      player.magnetFX = createMagnetFieldFX(this.scene);
+    }
   }
 
   screenToWorld(commands) {
@@ -405,6 +416,7 @@ export class Game {
     }
     this.ball.mixer.update(dt);
     this.syncVisuals(dt);
+    this.updateMagnetFields(dt);
     this.updateEffects(dt);
     this.updateCamera(dt);
     this.updateHud();
@@ -636,8 +648,28 @@ export class Game {
     this.camera.lookAt(bx * 0.25, 0, bz * 0.45);
   }
 
+  updateMagnetFields(dt) {
+    const ballMesh = this.ball.mesh;
+    for (const p of this.players) {
+      if (!p.magnetFX) continue;
+      p.magnetFX.update(dt, {
+        active: Boolean(p.hero?.active) && isPlayerActive(p),
+        captured: Boolean(p.hero?.captured),
+        playerX: p.mesh.position.x,
+        playerZ: p.mesh.position.z,
+        ballX: ballMesh.position.x,
+        ballY: ballMesh.position.y,
+        ballZ: ballMesh.position.z,
+        ballRadius: BALL.radius,
+        range: p.hero?.def?.magnetRange ?? 3,
+      });
+    }
+  }
+
   spawnPowerFX(player, type, fromNetwork = false) {
-    if (type === 'magnet_off') return;
+    // Tesla's magnet has a persistent field FX driven by hero state (see
+    // updateMagnetFields), synced to guests via snapshots — no one-shot burst.
+    if (type.startsWith('magnet')) return;
     if (!fromNetwork) this.onFxEvent?.(this.players.indexOf(player), type);
 
     if (type === 'dash') {
@@ -661,8 +693,7 @@ export class Game {
       return;
     }
 
-    const color =
-      type === 'shoot' ? 0xffffff : type.startsWith('magnet') ? 0x6ea8ff : 0xffd84a;
+    const color = type === 'shoot' ? 0xffffff : 0xffd84a;
 
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.4, 0.55, 32),
@@ -801,6 +832,7 @@ export class Game {
     clearTimeout(this.bannerTimeout);
     for (const p of this.players) {
       if (p.antennaFX) disposeTeslaAntennaFX(p.antennaFX);
+      if (p.magnetFX) p.magnetFX.dispose(this.scene);
       disposeIntentLabel(p.intentLabel, this.scene);
       this.scene.remove(p.mesh);
     }
