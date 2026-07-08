@@ -22,6 +22,8 @@ class HeroBase {
       this.cooldownRemaining = Math.max(0, this.cooldownRemaining - dt);
     }
   }
+
+  breakHold() {}
 }
 
 export class SamHero extends HeroBase {
@@ -108,6 +110,20 @@ export class TeslaHero extends HeroBase {
       ball.vx = this.player.body.vx * 1.2;
       ball.vz = this.player.body.vz * 1.2;
     }
+    this.active = false;
+    this.captured = false;
+    this.cooldownRemaining = this.def.powerCooldown;
+    this.player.onPowerFX?.('magnet_off');
+  }
+
+  // A kick on the ball beats the magnet — without this, the hold/pull
+  // reassigns ball velocity every frame and a captured ball can never
+  // be contested. Does not touch ball velocity: the kick decides it.
+  breakHold(ball) {
+    if (!this.active) return;
+    const body = this.player.body;
+    const inPull = Math.hypot(body.x - ball.x, body.z - ball.z) < this.def.magnetRange;
+    if (!this.captured && !inPull) return;
     this.active = false;
     this.captured = false;
     this.cooldownRemaining = this.def.powerCooldown;

@@ -528,6 +528,9 @@ export class Game {
         const kickMultiplier = Number.isFinite(raw.kickMultiplier) ? raw.kickMultiplier : 1;
         const kickVelocity = player.shootVelocity * kickMultiplier;
         if (p.hero.captured) p.hero.release(ballBody);
+        for (const other of this.players) {
+          if (other !== p && isPlayerActive(other)) other.hero.breakHold(ballBody);
+        }
         ballBody.vx += (dx / len) * kickVelocity;
         ballBody.vz += (dz / len) * kickVelocity;
         this.spawnPowerFX(p, 'shoot');
