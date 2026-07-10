@@ -25,6 +25,7 @@ export class GameAudio {
     this.masterGain = null;
     this.noiseBuffer = null;
     this.voices = new Set();
+    this.magnetFields = new Map();
     this.lastPlayed = new Map();
     this.toggleButton = null;
     this.volumeInput = null;
@@ -72,6 +73,9 @@ export class GameAudio {
 
   setMuted(muted) {
     this.muted = Boolean(muted);
+    if (this.muted) {
+      for (const id of this.magnetFields.keys()) this.stopMagnetField(id);
+    }
     this.applyMasterGain();
     this.updateControls();
     this.savePreferences();
@@ -79,6 +83,9 @@ export class GameAudio {
 
   setVolume(volume, save = true) {
     this.volume = clamp(Number(volume) || 0, 0, 1);
+    if (this.volume <= 0) {
+      for (const id of this.magnetFields.keys()) this.stopMagnetField(id);
+    }
     this.applyMasterGain();
     this.updateControls();
     if (save) this.savePreferences();
@@ -181,21 +188,59 @@ export class GameAudio {
 
   playWall({ strength = 0.5, pan = 0 } = {}) {
     const force = clamp(strength, 0, 1);
+    // Force-field impact: a low energy bloom, a resonant shield sweep, and
+    // irregular electrical crackles instead of a physical wall "thunk".
     this.tone({
-      frequency: 250 + force * 170,
-      endFrequency: 82,
-      type: 'triangle',
-      duration: 0.09 + force * 0.035,
-      gain: 0.07 + force * 0.1,
+      frequency: 118 + force * 74,
+      endFrequency: 38,
+      type: 'sine',
+      duration: 0.22 + force * 0.12,
+      attack: 0.012,
+      gain: 0.08 + force * 0.12,
+      pan,
+    });
+    this.tone({
+      frequency: 720 + force * 740,
+      endFrequency: 135 + force * 55,
+      type: 'sine',
+      duration: 0.15 + force * 0.09,
+      attack: 0.003,
+      gain: 0.035 + force * 0.055,
       pan,
     });
     this.noise({
-      frequency: 900 + force * 1300,
+      frequency: 2600 + force * 2100,
+      endFrequency: 230 + force * 170,
       filterType: 'bandpass',
-      q: 1.2,
-      duration: 0.055 + force * 0.035,
-      gain: 0.025 + force * 0.055,
+      q: 3.8 + force * 3,
+      duration: 0.19 + force * 0.12,
+      attack: 0.002,
+      gain: 0.05 + force * 0.085,
       pan,
+    });
+    const crackles = force > 0.62 ? 4 : force > 0.25 ? 3 : 2;
+    for (let i = 0; i < crackles; i++) {
+      this.noise({
+        frequency: 3300 + force * 2600 - i * 280,
+        endFrequency: 900 + i * 170,
+        filterType: 'highpass',
+        q: 0.8,
+        delay: 0.018 + i * (0.025 + force * 0.012),
+        duration: 0.022 + force * 0.018,
+        attack: 0.001,
+        gain: 0.018 + force * 0.032,
+        pan: clamp(pan + (i % 2 === 0 ? -0.08 : 0.08), -1, 1),
+      });
+    }
+    this.noise({
+      frequency: 1450 + force * 850,
+      endFrequency: 520,
+      filterType: 'bandpass',
+      q: 2.4,
+      delay: 0.075,
+      duration: 0.17 + force * 0.08,
+      gain: 0.022 + force * 0.035,
+      pan: clamp(pan * 0.8, -1, 1),
     });
   }
 
@@ -213,28 +258,253 @@ export class GameAudio {
   }
 
   playMagnetOn({ pan = 0 } = {}) {
-    [260, 390, 585].forEach((frequency, index) => {
-      this.tone({
-        frequency,
-        endFrequency: frequency * 1.35,
-        type: 'sine',
-        delay: index * 0.055,
-        duration: 0.16,
-        gain: 0.055,
-        pan,
-      });
+    this.noise({
+      frequency: 280,
+      endFrequency: 1650,
+      filterType: 'bandpass',
+      q: 1.4,
+      duration: 0.34,
+      attack: 0.07,
+      gain: 0.09,
+      pan,
     });
-    this.noise({ frequency: 2700, filterType: 'bandpass', q: 6, duration: 0.22, gain: 0.025, pan });
+    this.tone({
+      frequency: 68,
+      endFrequency: 112,
+      type: 'sine',
+      duration: 0.38,
+      attack: 0.08,
+      gain: 0.08,
+      pan,
+    });
   }
 
   playMagnetCapture({ pan = 0 } = {}) {
-    this.tone({ frequency: 980, endFrequency: 370, type: 'square', duration: 0.09, gain: 0.045, pan });
-    this.noise({ frequency: 3300, filterType: 'highpass', duration: 0.06, gain: 0.035, pan });
+    // A soft two-part "yoink": the ball accelerates inward, then settles into the hold.
+    this.noise({
+      frequency: 1250,
+      endFrequency: 330,
+      filterType: 'bandpass',
+      q: 1.8,
+      duration: 0.18,
+      gain: 0.075,
+      pan,
+    });
+    this.tone({ frequency: 175, endFrequency: 410, type: 'sine', duration: 0.15, gain: 0.085, pan });
+    this.tone({
+      frequency: 510,
+      endFrequency: 285,
+      type: 'sine',
+      delay: 0.075,
+      duration: 0.19,
+      attack: 0.018,
+      gain: 0.065,
+      pan,
+    });
   }
 
   playMagnetOff({ pan = 0 } = {}) {
-    this.tone({ frequency: 620, endFrequency: 180, type: 'sine', duration: 0.2, gain: 0.07, pan });
-    this.tone({ frequency: 310, endFrequency: 105, type: 'triangle', duration: 0.22, gain: 0.035, pan });
+    this.noise({
+      frequency: 1050,
+      endFrequency: 190,
+      filterType: 'bandpass',
+      q: 1.1,
+      duration: 0.26,
+      gain: 0.055,
+      pan,
+    });
+    this.tone({ frequency: 135, endFrequency: 54, type: 'sine', duration: 0.3, gain: 0.07, pan });
+  }
+
+  updateMagnetField(id, { active = false, pulling = false, captured = false, strength = 0, pan = 0 } = {}) {
+    const key = String(id);
+    if (!active || this.muted || this.volume <= 0) {
+      this.stopMagnetField(key);
+      return;
+    }
+
+    const context = this.ensureContext();
+    if (!context || context.state !== 'running') return;
+
+    let field = this.magnetFields.get(key);
+    if (!field) {
+      field = this.createMagnetField(key, pan);
+      this.magnetFields.set(key, field);
+    } else if (field.stopTimer) {
+      clearTimeout(field.stopTimer);
+      field.stopTimer = null;
+    }
+
+    const now = context.currentTime;
+    const pull = pulling ? clamp(strength, 0, 1) : captured ? 0.42 : 0;
+    const baseFrequency = 82 + pull * 92;
+    const fieldVolume = captured ? 0.047 : 0.028 + pull * 0.085;
+
+    smoothParam(field.carrierA.frequency, baseFrequency, now, 0.055);
+    smoothParam(field.carrierB.frequency, baseFrequency * 1.505, now, 0.055);
+    smoothParam(field.lfo.frequency, 2.6 + pull * 7.2, now, 0.08);
+    smoothParam(field.pitchWobble.gain, 2.5 + pull * 13, now, 0.08);
+    smoothParam(field.filterWobble.gain, 90 + pull * 620, now, 0.08);
+    smoothParam(field.noiseFilter.frequency, 430 + pull * 1500, now, 0.055);
+    smoothParam(field.noiseFilter.Q, 1.1 + pull * 4.8, now, 0.07);
+    smoothParam(field.noiseGain.gain, captured ? 0.035 : 0.018 + pull * 0.15, now, 0.06);
+    smoothParam(field.delay.delayTime, 0.038 - pull * 0.016, now, 0.09);
+    smoothParam(field.fieldGain.gain, fieldVolume, now, 0.045);
+    if (field.panner) smoothParam(field.panner.pan, clamp(pan, -1, 1), now, 0.07);
+  }
+
+  createMagnetField(id, pan) {
+    const context = this.context;
+    const now = context.currentTime;
+    const carrierA = context.createOscillator();
+    const carrierB = context.createOscillator();
+    const carrierAGain = context.createGain();
+    const carrierBGain = context.createGain();
+    const noiseSource = context.createBufferSource();
+    const noiseFilter = context.createBiquadFilter();
+    const noiseGain = context.createGain();
+    const mix = context.createGain();
+    const dryGain = context.createGain();
+    const delay = context.createDelay(0.12);
+    const feedbackGain = context.createGain();
+    const wetGain = context.createGain();
+    const fieldGain = context.createGain();
+    const lfo = context.createOscillator();
+    const pitchWobble = context.createGain();
+    const filterWobble = context.createGain();
+    const panner =
+      typeof context.createStereoPanner === 'function' ? context.createStereoPanner() : null;
+
+    carrierA.type = 'sine';
+    carrierB.type = 'sine';
+    carrierA.frequency.value = 82;
+    carrierB.frequency.value = 123.4;
+    carrierAGain.gain.value = 0.2;
+    carrierBGain.gain.value = 0.075;
+
+    noiseSource.buffer = this.getNoiseBuffer();
+    noiseSource.loop = true;
+    noiseFilter.type = 'bandpass';
+    noiseFilter.frequency.value = 430;
+    noiseFilter.Q.value = 1.1;
+    noiseGain.gain.value = 0.018;
+
+    dryGain.gain.value = 0.86;
+    delay.delayTime.value = 0.038;
+    feedbackGain.gain.value = 0.16;
+    wetGain.gain.value = 0.3;
+    fieldGain.gain.setValueAtTime(0.0001, now);
+    fieldGain.gain.linearRampToValueAtTime(0.028, now + 0.12);
+
+    lfo.type = 'sine';
+    lfo.frequency.value = 2.6;
+    pitchWobble.gain.value = 2.5;
+    filterWobble.gain.value = 90;
+    lfo.connect(pitchWobble);
+    pitchWobble.connect(carrierA.frequency);
+    pitchWobble.connect(carrierB.frequency);
+    lfo.connect(filterWobble);
+    filterWobble.connect(noiseFilter.frequency);
+
+    carrierA.connect(carrierAGain);
+    carrierB.connect(carrierBGain);
+    carrierAGain.connect(mix);
+    carrierBGain.connect(mix);
+    noiseSource.connect(noiseFilter);
+    noiseFilter.connect(noiseGain);
+    noiseGain.connect(mix);
+    mix.connect(dryGain);
+    dryGain.connect(fieldGain);
+    mix.connect(delay);
+    delay.connect(feedbackGain);
+    feedbackGain.connect(delay);
+    delay.connect(wetGain);
+    wetGain.connect(fieldGain);
+
+    if (panner) {
+      panner.pan.value = clamp(pan, -1, 1);
+      fieldGain.connect(panner);
+      panner.connect(this.compressor);
+    } else {
+      fieldGain.connect(this.compressor);
+    }
+
+    carrierA.start(now);
+    carrierB.start(now);
+    noiseSource.start(now);
+    lfo.start(now);
+
+    return {
+      id,
+      carrierA,
+      carrierB,
+      noiseSource,
+      lfo,
+      noiseFilter,
+      noiseGain,
+      delay,
+      fieldGain,
+      pitchWobble,
+      filterWobble,
+      panner,
+      sources: [carrierA, carrierB, noiseSource, lfo],
+      nodes: [
+        carrierA,
+        carrierB,
+        carrierAGain,
+        carrierBGain,
+        noiseSource,
+        noiseFilter,
+        noiseGain,
+        mix,
+        dryGain,
+        delay,
+        feedbackGain,
+        wetGain,
+        fieldGain,
+        lfo,
+        pitchWobble,
+        filterWobble,
+        ...(panner ? [panner] : []),
+      ],
+      stopTimer: null,
+    };
+  }
+
+  stopMagnetField(id, immediate = false) {
+    const key = String(id);
+    const field = this.magnetFields.get(key);
+    if (!field) return;
+    if (immediate) {
+      this.cleanupMagnetField(field);
+      return;
+    }
+    if (field.stopTimer) return;
+
+    const now = this.context.currentTime;
+    field.fieldGain.gain.cancelScheduledValues(now);
+    field.fieldGain.gain.setTargetAtTime(0.0001, now, 0.04);
+    field.stopTimer = setTimeout(() => this.cleanupMagnetField(field), 220);
+  }
+
+  cleanupMagnetField(field) {
+    if (this.magnetFields.get(field.id) !== field) return;
+    if (field.stopTimer) clearTimeout(field.stopTimer);
+    this.magnetFields.delete(field.id);
+    for (const source of field.sources) {
+      try {
+        source.stop();
+      } catch {
+        // The source may already have stopped while the field was fading out.
+      }
+    }
+    for (const node of field.nodes) {
+      try {
+        node.disconnect();
+      } catch {
+        // Already disconnected.
+      }
+    }
   }
 
   playKickoff({ delay = 0 } = {}) {
@@ -462,6 +732,11 @@ function readPreferences() {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function smoothParam(param, value, now, timeConstant) {
+  param.cancelScheduledValues(now);
+  param.setTargetAtTime(value, now, timeConstant);
 }
 
 export const gameAudio = new GameAudio();

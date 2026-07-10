@@ -493,6 +493,25 @@ kbd {
   gap: 12px;
 }
 
+#online-teams {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#online-teams .local-player {
+  flex-wrap: wrap;
+}
+
+.local-player-top {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.local-player-top .local-player-name {
+  flex: 1;
+}
+
 .local-team {
   min-width: 0;
   display: flex;
@@ -512,6 +531,15 @@ kbd {
 .local-team.blue {
   border-color: rgba(110, 168, 255, 0.42);
   background: linear-gradient(180deg, rgba(110, 168, 255, 0.14), rgba(8, 11, 22, 0.68));
+}
+
+.local-team.spectator {
+  border-color: rgba(170, 180, 204, 0.3);
+  background: linear-gradient(180deg, rgba(170, 180, 204, 0.08), rgba(8, 11, 22, 0.68));
+}
+
+.local-team.spectator .local-team-name {
+  color: #c6cede;
 }
 
 .local-team-name {
@@ -592,6 +620,33 @@ kbd {
   font-weight: 700;
 }
 
+.move-arrows {
+  flex-shrink: 0;
+  display: flex;
+  gap: 4px;
+}
+
+.move-arrow {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(110, 168, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(110, 168, 255, 0.08);
+  color: #dfe6f5;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.move-arrow:hover {
+  border-color: rgba(110, 168, 255, 0.5);
+  background: rgba(110, 168, 255, 0.22);
+}
+
 .local-player-controls {
   flex-shrink: 0;
   display: flex;
@@ -607,22 +662,6 @@ kbd {
   color: #9fb0d0;
   font-size: 12px;
   font-weight: 800;
-}
-
-.team-move {
-  width: 34px;
-  min-height: 34px;
-  border: 1px solid rgba(110, 168, 255, 0.28);
-  border-radius: 6px;
-  background: rgba(110, 168, 255, 0.08);
-  color: #dfe6f5;
-  font-size: 14px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.team-move:hover {
-  background: rgba(110, 168, 255, 0.18);
 }
 
 .hero-toggle {
@@ -705,7 +744,7 @@ kbd {
 
 .tiny-btn:not(:disabled):active,
 .hero-choice:not(:disabled):active,
-.team-move:not(:disabled):active {
+.move-arrow:not(:disabled):active {
   transform: translateY(1px);
 }
 

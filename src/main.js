@@ -64,6 +64,7 @@ const startOnlineBtn = document.getElementById('start-online-btn');
 const joinRoomBtn = document.getElementById('join-room-btn');
 const cancelOnlineBtn = document.getElementById('cancel-online-btn');
 const onlineRedRoster = document.getElementById('online-red-roster');
+const onlineSpectatorRoster = document.getElementById('online-spectator-roster');
 const onlineBlueRoster = document.getElementById('online-blue-roster');
 const aiTestBtn = document.getElementById('ai-test-btn');
 const aiTestPanel = document.getElementById('ai-test-panel');
@@ -454,7 +455,9 @@ async function joinRoom() {
   }
 
   closeOnlineSession(false);
+  const teamChoice = onlineState?.guestTeam ?? null;
   onlineState = createOnlineState('guest');
+  onlineState.guestTeam = teamChoice;
 
   try {
     setOnlineStatus('Joining room...');
@@ -1006,6 +1009,7 @@ function createOnlineState(role) {
     guests: [],
     lobbyPlayers: [],
     guestYouIndex: null,
+    guestTeam: null,
     remoteCommands: new Map(),
     connectionPlayerIndexes: new Map(),
     inputSeq: 0,
@@ -1062,6 +1066,7 @@ function resetOnlinePanel() {
   startOnlineBtn.classList.add('hidden');
   startOnlineBtn.disabled = true;
   onlineRedRoster.replaceChildren();
+  onlineSpectatorRoster.replaceChildren();
   onlineBlueRoster.replaceChildren();
   setOnlineStatus('Idle');
   if (!startBtn.classList.contains('selected')) setActiveMode(null);
@@ -1076,10 +1081,12 @@ function registerGuest(connectionId, message) {
 
   const normalizedHero = normalizeHero(message?.heroKind);
   const nickname = normalizeNickname(message?.nickname, `Guest ${onlineState.guests.length + 1}`);
+  const requestedTeam = message?.team == null ? null : normalizeTeam(message.team, null);
   const existingGuest = onlineState.guests.find((guest) => guest.connectionId === connectionId);
   if (existingGuest) {
     existingGuest.heroKind = normalizedHero;
     existingGuest.nickname = nickname;
+    if (requestedTeam != null) existingGuest.team = requestedTeam;
     updateHostLobbyStatus();
     return;
   }
@@ -1093,7 +1100,7 @@ function registerGuest(connectionId, message) {
     connectionId,
     nickname,
     heroKind: normalizedHero,
-    team: defaultTeamForPlayerIndex(onlineState.guests.length + 1),
+    team: requestedTeam ?? defaultTeamForPlayerIndex(onlineState.guests.length + 1),
   });
   updateHostLobbyStatus();
 }
@@ -1139,11 +1146,14 @@ function syncHostPlayerInfo() {
 
 function sendGuestHello() {
   if (!onlineSession || onlineState?.role !== 'guest' || onlineState.started) return;
-  onlineSession.send({
+  const hello = {
     type: 'hello',
     nickname: currentNickname(),
     heroKind: normalizeHero(selectedHero),
-  });
+  };
+  // Only claim a team once the guest picked one; otherwise the host assigns.
+  if (onlineState.guestTeam != null) hello.team = onlineState.guestTeam;
+  onlineSession.send(hello);
 }
 
 function broadcastLobbyState() {
@@ -1170,6 +1180,9 @@ function updateGuestLobby(message) {
     Number.isInteger(youIndex) && youIndex >= 0 && youIndex < onlineState.lobbyPlayers.length
       ? youIndex
       : null;
+  // Follow the host's placement so later hellos (hero/nickname changes) don't fight it.
+  const you = onlineState.guestYouIndex != null ? onlineState.lobbyPlayers[onlineState.guestYouIndex] : null;
+  if (you) onlineState.guestTeam = you.team;
   joinRoomBtn.classList.add('hidden');
   primaryCode.readOnly = true;
   renderOnlineLobby();
@@ -1292,9 +1305,15 @@ function renderOnlineLobby() {
       youIndex: onlineState.guestYouIndex,
     });
   } else {
-    // Not connected yet - show yourself so hero choice works before joining.
+    // Not connected yet - show yourself so hero and team choice work before joining.
     renderOnlineRoster(
-      [{ nickname: currentNickname(), heroKind: normalizeHero(selectedHero), team: TEAM.RED }],
+      [
+        {
+          nickname: currentNickname(),
+          heroKind: normalizeHero(selectedHero),
+          team: onlineState.guestTeam ?? TEAM.RED,
+        },
+      ],
       { editable: false, youIndex: 0 }
     );
   }
@@ -1302,17 +1321,28 @@ function renderOnlineLobby() {
 
 function renderOnlineRoster(players, { editable, youIndex }) {
   onlineRedRoster.replaceChildren();
+  onlineSpectatorRoster.replaceChildren();
   onlineBlueRoster.replaceChildren();
 
   players.forEach((player, index) => {
+    const team = normalizeTeam(player.team, TEAM.RED);
     const row = document.createElement('div');
     row.className = 'local-player';
+
+    const top = document.createElement('div');
+    top.className = 'local-player-top';
 
     const name = document.createElement('div');
     name.className = 'local-player-name';
     name.textContent = normalizeNickname(player.nickname, `Player ${index + 1}`);
     if (index === youIndex) name.appendChild(createRowTag('You'));
     if (player.isHost || player.connectionId === 'host') name.appendChild(createRowTag('Host', 'host'));
+    top.appendChild(name);
+
+    // Host can move anyone; a guest can move only themselves.
+    if (editable || index === youIndex) {
+      top.appendChild(createMoveArrows(player, team, editable));
+    }
 
     const controls = document.createElement('div');
     controls.className = 'local-player-controls';
@@ -1329,16 +1359,64 @@ function renderOnlineRoster(players, { editable, youIndex }) {
       hero.title = HERO_POWERS[normalizeHero(player.heroKind)];
       controls.appendChild(hero);
     }
-    if (editable) controls.appendChild(createTeamSwitchButton(player));
 
-    row.appendChild(name);
+    row.appendChild(top);
     row.appendChild(controls);
-    const roster = normalizeTeam(player.team, TEAM.RED) === TEAM.BLUE ? onlineBlueRoster : onlineRedRoster;
+    const roster =
+      team === TEAM.BLUE ? onlineBlueRoster : team === TEAM.SPECTATOR ? onlineSpectatorRoster : onlineRedRoster;
     roster.appendChild(row);
   });
 
-  appendRosterPlaceholder(onlineRedRoster);
-  appendRosterPlaceholder(onlineBlueRoster);
+  appendRosterPlaceholder(onlineRedRoster, 'Waiting for players...');
+  appendRosterPlaceholder(onlineSpectatorRoster, 'No spectators');
+  appendRosterPlaceholder(onlineBlueRoster, 'Waiting for players...');
+}
+
+const LOBBY_COLUMN_ORDER = Object.freeze([TEAM.RED, TEAM.SPECTATOR, TEAM.BLUE]);
+
+function createMoveArrows(player, team, editable) {
+  const wrap = document.createElement('span');
+  wrap.className = 'move-arrows';
+  const position = LOBBY_COLUMN_ORDER.indexOf(team);
+  if (position > 0) {
+    wrap.appendChild(createMoveArrowButton(player, LOBBY_COLUMN_ORDER[position - 1], '◄', editable));
+  }
+  if (position < LOBBY_COLUMN_ORDER.length - 1) {
+    wrap.appendChild(createMoveArrowButton(player, LOBBY_COLUMN_ORDER[position + 1], '►', editable));
+  }
+  return wrap;
+}
+
+function createMoveArrowButton(player, targetTeam, glyph, editable) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'move-arrow';
+  button.textContent = glyph;
+  button.title = `Move to ${lobbyTeamLabel(targetTeam)}`;
+  button.setAttribute('aria-label', `Move ${player.nickname} to ${lobbyTeamLabel(targetTeam)}`);
+  button.addEventListener('click', () => {
+    if (editable) {
+      player.team = targetTeam;
+      updateHostLobbyStatus();
+    } else {
+      setGuestTeam(targetTeam);
+    }
+  });
+  return button;
+}
+
+function lobbyTeamLabel(team) {
+  if (team === TEAM.SPECTATOR) return 'Spectators';
+  return team === TEAM.BLUE ? 'Blue Team' : 'Red Team';
+}
+
+function setGuestTeam(team) {
+  if (!onlineState || onlineState.role !== 'guest' || onlineState.started) return;
+  onlineState.guestTeam = normalizeTeam(team, TEAM.RED);
+  const you = onlineState.lobbyPlayers[onlineState.guestYouIndex];
+  if (you) you.team = onlineState.guestTeam;
+  renderOnlineLobby();
+  sendGuestHello();
 }
 
 function createRowTag(label, variant = '') {
@@ -1370,26 +1448,11 @@ function createOnlineHeroButton(heroKind) {
   return button;
 }
 
-function createTeamSwitchButton(player) {
-  const targetTeam = normalizeTeam(player.team, TEAM.RED) === TEAM.BLUE ? TEAM.RED : TEAM.BLUE;
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'team-move';
-  button.textContent = '⇄';
-  button.title = `Move to ${teamName(targetTeam)}`;
-  button.setAttribute('aria-label', `Move ${player.nickname} to ${teamName(targetTeam)}`);
-  button.addEventListener('click', () => {
-    player.team = targetTeam;
-    updateHostLobbyStatus();
-  });
-  return button;
-}
-
-function appendRosterPlaceholder(roster) {
+function appendRosterPlaceholder(roster, text) {
   if (roster.childElementCount) return;
   const placeholder = document.createElement('div');
   placeholder.className = 'local-player placeholder';
-  placeholder.textContent = 'Waiting for players...';
+  placeholder.textContent = text;
   roster.appendChild(placeholder);
 }
 

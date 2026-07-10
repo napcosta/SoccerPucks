@@ -59,6 +59,7 @@ const POWER_SOUND_KIND = Object.freeze({
   magnet_capture: 'magnet_capture',
   magnet_off: 'magnet_off',
 });
+let nextAudioScopeId = 1;
 
 export class Game {
   constructor({
@@ -83,6 +84,7 @@ export class Game {
     this.hud = hud;
     this.scoreboard = scoreboard;
     this.audio = audio;
+    this.audioScopeId = nextAudioScopeId++;
     this.localPlayerIndex = localPlayerIndex;
     this.authoritative = authoritative;
     this.inputProvider = inputProvider;
@@ -213,6 +215,7 @@ export class Game {
       ai: { intent: 'attackBall', intentAge: 0, intentScore: 0 },
       intentLabel,
       indicator,
+      audioId: `${this.audioScopeId}:player:${index}`,
       headTop: meshTopY(mesh),
       visualX: spawnX,
       visualZ: spawnZ,
@@ -376,6 +379,7 @@ export class Game {
     }
 
     if (player.magnetFX) {
+      this.audio?.stopMagnetField(player.audioId);
       player.magnetFX.dispose(this.scene);
       player.magnetFX = null;
     }
@@ -710,16 +714,31 @@ export class Game {
     const ballMesh = this.ball.mesh;
     for (const p of this.players) {
       if (!p.magnetFX) continue;
+      const active = Boolean(p.hero?.active) && isPlayerActive(p);
+      const captured = Boolean(p.hero?.captured);
+      const range = p.hero?.def?.magnetRange ?? 3;
+      const distance = Math.hypot(
+        p.mesh.position.x - ballMesh.position.x,
+        p.mesh.position.z - ballMesh.position.z
+      );
+      const strength = active ? clamp(1 - distance / range, 0, 1) : 0;
+      this.audio?.updateMagnetField(p.audioId, {
+        active,
+        pulling: active && !captured && distance < range,
+        captured,
+        strength,
+        pan: this.soundPanForZ(p.mesh.position.z),
+      });
       p.magnetFX.update(dt, {
-        active: Boolean(p.hero?.active) && isPlayerActive(p),
-        captured: Boolean(p.hero?.captured),
+        active,
+        captured,
         playerX: p.mesh.position.x,
         playerZ: p.mesh.position.z,
         ballX: ballMesh.position.x,
         ballY: ballMesh.position.y,
         ballZ: ballMesh.position.z,
         ballRadius: BALL.radius,
-        range: p.hero?.def?.magnetRange ?? 3,
+        range,
       });
     }
   }
@@ -976,6 +995,7 @@ export class Game {
   dispose() {
     clearTimeout(this.bannerTimeout);
     for (const p of this.players) {
+      this.audio?.stopMagnetField(p.audioId, true);
       if (p.antennaFX) disposeTeslaAntennaFX(p.antennaFX);
       if (p.magnetFX) p.magnetFX.dispose(this.scene);
       disposeIntentLabel(p.intentLabel, this.scene);
