@@ -498,14 +498,26 @@ kbd {
 }
 
 #online-teams .local-player {
-  flex-wrap: wrap;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
+  grid-template-rows: auto auto;
+  column-gap: 4px;
+  row-gap: 8px;
 }
 
 .local-player-top {
   flex: 1 1 100%;
+  width: 100%;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+#online-teams .local-player-top {
+  grid-column: 1 / -1;
+  grid-row: 1;
 }
 
 .local-player-top .local-player-name {
@@ -620,15 +632,17 @@ kbd {
   font-weight: 700;
 }
 
-.move-arrows {
-  flex-shrink: 0;
+#online-teams .local-player.placeholder {
   display: flex;
-  gap: 4px;
+}
+
+.move-arrows {
+  display: contents;
 }
 
 .move-arrow {
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -637,9 +651,21 @@ kbd {
   border-radius: 6px;
   background: rgba(110, 168, 255, 0.08);
   color: #dfe6f5;
-  font-size: 10px;
+  font-size: 12px;
+  line-height: 1;
+  touch-action: manipulation;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
+}
+
+.move-arrow.left {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.move-arrow.right {
+  grid-column: 3;
+  grid-row: 2;
 }
 
 .move-arrow:hover {
@@ -652,6 +678,25 @@ kbd {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+#online-teams .local-player-controls {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  width: 100%;
+  justify-content: center;
+}
+
+#online-teams .hero-toggle {
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+#online-teams .hero-choice {
+  min-width: 0;
+  padding-inline: 4px;
 }
 
 .hero-chip {

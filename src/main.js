@@ -1340,8 +1340,9 @@ function renderOnlineRoster(players, { editable, youIndex }) {
     top.appendChild(name);
 
     // Host can move anyone; a guest can move only themselves.
+    let moveArrows = null;
     if (editable || index === youIndex) {
-      top.appendChild(createMoveArrows(player, team, editable));
+      moveArrows = createMoveArrows(player, team, editable);
     }
 
     const controls = document.createElement('div');
@@ -1362,6 +1363,7 @@ function renderOnlineRoster(players, { editable, youIndex }) {
 
     row.appendChild(top);
     row.appendChild(controls);
+    if (moveArrows) row.appendChild(moveArrows);
     const roster =
       team === TEAM.BLUE ? onlineBlueRoster : team === TEAM.SPECTATOR ? onlineSpectatorRoster : onlineRedRoster;
     roster.appendChild(row);
@@ -1379,18 +1381,18 @@ function createMoveArrows(player, team, editable) {
   wrap.className = 'move-arrows';
   const position = LOBBY_COLUMN_ORDER.indexOf(team);
   if (position > 0) {
-    wrap.appendChild(createMoveArrowButton(player, LOBBY_COLUMN_ORDER[position - 1], '◄', editable));
+    wrap.appendChild(createMoveArrowButton(player, LOBBY_COLUMN_ORDER[position - 1], '◄', 'left', editable));
   }
   if (position < LOBBY_COLUMN_ORDER.length - 1) {
-    wrap.appendChild(createMoveArrowButton(player, LOBBY_COLUMN_ORDER[position + 1], '►', editable));
+    wrap.appendChild(createMoveArrowButton(player, LOBBY_COLUMN_ORDER[position + 1], '►', 'right', editable));
   }
   return wrap;
 }
 
-function createMoveArrowButton(player, targetTeam, glyph, editable) {
+function createMoveArrowButton(player, targetTeam, glyph, direction, editable) {
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'move-arrow';
+  button.className = `move-arrow ${direction}`;
   button.textContent = glyph;
   button.title = `Move to ${lobbyTeamLabel(targetTeam)}`;
   button.setAttribute('aria-label', `Move ${player.nickname} to ${lobbyTeamLabel(targetTeam)}`);
