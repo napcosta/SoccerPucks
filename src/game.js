@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PITCH, PLAYER, BALL, MATCH, TEAM, TEAM_COLORS } from './constants.js';
+import { PITCH, PLAYER, BALL, MATCH, TEAM, TEAM_COLORS, NO_REFLECT_LAYER } from './constants.js';
 import {
   createBody,
   integrate,
@@ -36,6 +36,29 @@ const REMOTE_BALL_VISUAL = Object.freeze({
   response: 45,
   snapDistance: 1.6,
 });
+// FIFA-style overhead marker: one color per player slot, stable across teams.
+const INDICATOR_COLORS = ['#ff2e5e', '#35b1ff', '#ffd23f', '#b06bff'];
+// Match the HUD power bar (css/style.css): orange while charging, green when ready.
+const INDICATOR_READY_COLOR = '#2ee66b';
+const INDICATOR_CHARGING_COLOR = '#ff9b2f';
+const SOUND_KINDS = new Set([
+  'kick',
+  'wall',
+  'dash',
+  'magnet_on',
+  'magnet_capture',
+  'magnet_off',
+  'kickoff',
+  'goal',
+  'match_end',
+]);
+const POWER_SOUND_KIND = Object.freeze({
+  shoot: 'kick',
+  dash: 'dash',
+  magnet_on: 'magnet_on',
+  magnet_capture: 'magnet_capture',
+  magnet_off: 'magnet_off',
+});
 
 export class Game {
   constructor({
@@ -44,6 +67,7 @@ export class Game {
     assets,
     hud,
     scoreboard,
+    audio = null,
     playerHero,
     playerSpecs,
     localPlayerIndex = 0,
@@ -58,6 +82,7 @@ export class Game {
     this.assets = assets;
     this.hud = hud;
     this.scoreboard = scoreboard;
+    this.audio = audio;
     this.localPlayerIndex = localPlayerIndex;
     this.authoritative = authoritative;
     this.inputProvider = inputProvider;
@@ -78,8 +103,11 @@ export class Game {
     this.effects = [];
     this.activeBanner = { visible: false, text: '', color: '#ffffff' };
     this.lastSnapshotSeq = 0;
+    this.soundEventSeq = 0;
+    this.lastNetworkSoundEventId = 0;
     this.onFxEvent = null;
     this.onWallFxEvent = null;
+    this.onSoundEvent = null;
 
     this.ball = this.createBall();
     const specs =
@@ -101,7 +129,8 @@ export class Game {
         spec.spawnX ?? 0,
         spec.spawnZ,
         spec.control,
-        spec.nickname ?? `Player ${index + 1}`
+        spec.nickname ?? `Player ${index + 1}`,
+        index
       )
     );
 
@@ -142,7 +171,7 @@ export class Game {
     };
   }
 
-  createPlayer(heroKind, team, spawnX, spawnZ, control = 'ai', nickname = 'Player') {
+  createPlayer(heroKind, team, spawnX, spawnZ, control = 'ai', nickname = 'Player', index = 0) {
     const gltfSource = heroGltfSource(this.assets, heroKind);
     const mesh = cloneHeroScene(gltfSource);
     const meshScale = (PLAYER.radius * 2) / 2.96;
@@ -152,6 +181,8 @@ export class Game {
     this.scene.add(mesh);
     const intentLabel = createIntentLabel();
     this.scene.add(intentLabel.sprite);
+    const indicator = createPlayerIndicator(INDICATOR_COLORS[index % INDICATOR_COLORS.length]);
+    this.scene.add(indicator.sprite);
 
     const mixer = new THREE.AnimationMixer(mesh);
     const actions = {};
@@ -181,6 +212,8 @@ export class Game {
       powerHeld: false,
       ai: { intent: 'attackBall', intentAge: 0, intentScore: 0 },
       intentLabel,
+      indicator,
+      headTop: meshTopY(mesh),
       visualX: spawnX,
       visualZ: spawnZ,
       surfaceY,
@@ -220,7 +253,10 @@ export class Game {
       p.shootHeld = false;
       p.powerHeld = false;
       p.mesh.visible = active;
-      if (!active) p.intentLabel.sprite.visible = false;
+      if (!active) {
+        p.intentLabel.sprite.visible = false;
+        p.indicator.sprite.visible = false;
+      }
       resetVisualPosition(p);
       updateFacingTowardBall(p, this.ball.body);
       if (p.hero.active) p.hero.release?.(this.ball.body);
@@ -369,6 +405,7 @@ export class Game {
     player.actions = actions;
     player.currentAction = 'Idle';
     player.surfaceY = surfaceY;
+    player.headTop = meshTopY(mesh);
     player.hero = createHero(heroKind, player);
     player.onPowerFX = (type) => this.spawnPowerFX(player, type);
     if (heroKind === 'tesla') {
@@ -397,6 +434,7 @@ export class Game {
       if (this.state === 'kickoff' && this.stateTimer <= 0) {
         this.state = 'playing';
         this.hideBanner();
+        this.emitSound('kickoff');
       } else if (this.state === 'goal' && this.stateTimer <= 0) {
         this.resetPositions();
         this.state = 'kickoff';
@@ -566,6 +604,7 @@ export class Game {
     this.stateTimer = MATCH.celebrationTime;
     const color = team === TEAM.RED ? '#ff6a5e' : '#6ea8ff';
     this.showBanner('GOAL!', MATCH.celebrationTime, color);
+    this.emitSound('goal', { team });
 
     for (const p of this.players) {
       if (!isPlayerActive(p)) continue;
@@ -598,6 +637,8 @@ export class Game {
   }
 
   endMatch() {
+    const alreadyOver = this.state === 'over';
+    const endedFromGoal = this.state === 'goal';
     this.state = 'over';
     this.stateTimer = 4;
     const red = this.score[TEAM.RED];
@@ -612,6 +653,10 @@ export class Game {
       color = '#6ea8ff';
     }
     this.showBanner(text, 4, color);
+    if (!alreadyOver) {
+      const winnerTeam = red === blue ? 0 : red > blue ? TEAM.RED : TEAM.BLUE;
+      this.emitSound('match_end', { winnerTeam, delay: endedFromGoal ? 0.65 : 0 });
+    }
     for (const p of this.players) {
       if (!isPlayerActive(p)) continue;
       const won =
@@ -626,6 +671,7 @@ export class Game {
       if (!isPlayerActive(p)) {
         p.mesh.visible = false;
         p.intentLabel.sprite.visible = false;
+        p.indicator.sprite.visible = false;
         continue;
       }
       p.mesh.visible = true;
@@ -633,6 +679,7 @@ export class Game {
       const pos = syncVisualPosition(p, dt, smoothRemote, REMOTE_HERO_VISUAL);
       p.mesh.position.set(pos.x, p.surfaceY, pos.z);
       updateIntentLabel(p, pos);
+      updatePlayerIndicator(p, pos);
       if (this.state !== 'playing') updateFacingTowardBall(p, ballBody);
       const targetRot = Math.atan2(p.facingX, p.facingZ);
       p.mesh.rotation.y = dampAngle(p.mesh.rotation.y, targetRot, 12, dt);
@@ -685,6 +732,7 @@ export class Game {
       1,
       Math.max(0, (hit.impact - WALL_FX_MIN_IMPACT) / (WALL_FX_MAX_IMPACT - WALL_FX_MIN_IMPACT))
     );
+    if (!fromNetwork) this.emitSound('wall', { strength, pan: this.soundPanForZ(hit.z) });
 
     // Clamp the shield panel to the wall segment that was hit, sliding its
     // center away from corners so it never extends past the wall's ends.
@@ -715,6 +763,11 @@ export class Game {
   }
 
   spawnPowerFX(player, type, fromNetwork = false) {
+    const soundKind = POWER_SOUND_KIND[type];
+    if (!fromNetwork && soundKind) {
+      this.emitSound(soundKind, { pan: this.soundPanForZ(player.body.z) });
+    }
+
     // Tesla's magnet has a persistent field FX driven by hero state (see
     // updateMagnetFields), synced to guests via snapshots — no one-shot burst.
     if (type.startsWith('magnet')) return;
@@ -809,6 +862,50 @@ export class Game {
     this.hud.banner.classList.toggle('hidden', !visible);
   }
 
+  emitSound(kind, details = {}) {
+    if (!SOUND_KINDS.has(kind)) return;
+    const event = { id: ++this.soundEventSeq, kind, ...details };
+    this.playSoundEvent(event, false);
+    this.onSoundEvent?.(event);
+  }
+
+  playSoundEvent(event, fromNetwork = true) {
+    if (!event || !SOUND_KINDS.has(event.kind)) return;
+    if (fromNetwork) {
+      const id = Math.floor(Number(event.id));
+      if (!Number.isFinite(id) || id <= this.lastNetworkSoundEventId) return;
+      this.lastNetworkSoundEventId = id;
+    }
+
+    const options = {
+      pan: clamp(finiteOr(event.pan, 0), -1, 1),
+      strength: clamp(finiteOr(event.strength, 0.5), 0, 1),
+      delay: clamp(finiteOr(event.delay, 0), 0, 2),
+    };
+    const localPlayer = this.players[this.localPlayerIndex];
+    const localTeam = localPlayer && isPlayerActive(localPlayer) ? localPlayer.team : 0;
+
+    if (event.kind === 'goal') {
+      const scoringTeam = normalizeTeamValue(event.team, 0);
+      options.positive = localTeam === 0 || localTeam === scoringTeam;
+    } else if (event.kind === 'match_end') {
+      const winnerTeam = normalizeTeamValue(event.winnerTeam, 0);
+      options.outcome =
+        winnerTeam === 0 || localTeam === 0
+          ? 'draw'
+          : winnerTeam === localTeam
+            ? 'victory'
+            : 'defeat';
+    }
+
+    this.audio?.play(event.kind, options);
+  }
+
+  soundPanForZ(z) {
+    const reach = PITCH.halfLength + PITCH.goalDepth;
+    return clamp(-finiteOr(z, 0) / reach, -0.8, 0.8);
+  }
+
   serializeSnapshot(seq) {
     return {
       type: 'snapshot',
@@ -882,6 +979,7 @@ export class Game {
       if (p.antennaFX) disposeTeslaAntennaFX(p.antennaFX);
       if (p.magnetFX) p.magnetFX.dispose(this.scene);
       disposeIntentLabel(p.intentLabel, this.scene);
+      disposePlayerIndicator(p.indicator, this.scene);
       this.scene.remove(p.mesh);
     }
     this.scene.remove(this.ball.mesh);
@@ -983,6 +1081,121 @@ function disposeIntentLabel(label, scene) {
   scene.remove(label.sprite);
   label.texture.dispose();
   label.sprite.material.dispose();
+}
+
+// Downward-pointing triangle above the head. The stroke around it is the
+// power cooldown: gone right after the power fires, refills bottom-to-top
+// in orange, and turns green once the power is ready again.
+const INDICATOR_CANVAS = 256;
+const INDICATOR_OUTER = [
+  { x: 46, y: 50 },
+  { x: 210, y: 50 },
+  { x: 128, y: 216 },
+];
+const INDICATOR_INNER = [
+  { x: 70, y: 66 },
+  { x: 186, y: 66 },
+  { x: 128, y: 188 },
+];
+const INDICATOR_STROKE = 19;
+// Cooldown is quantized so the canvas only redraws when the visible amount changes.
+const INDICATOR_STEPS = 64;
+const INDICATOR_GAP_Y = 0.24;
+
+function createPlayerIndicator(color) {
+  const canvas = document.createElement('canvas');
+  canvas.width = INDICATOR_CANVAS;
+  canvas.height = INDICATOR_CANVAS;
+  const context = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    // Constant on-screen size regardless of distance to the camera.
+    sizeAttenuation: false,
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.center.set(0.5, 0);
+  // Without size attenuation the scale is an angular size: on-screen height
+  // fraction ≈ scale / (2 * tan(fov / 2)), ~6% of the viewport at fov 48.
+  sprite.scale.set(0.054, 0.054, 1);
+  sprite.renderOrder = 18;
+  sprite.layers.set(NO_REFLECT_LAYER);
+  const indicator = { canvas, context, texture, sprite, color, lastStep: -1 };
+  drawPlayerIndicator(indicator, 1);
+  return indicator;
+}
+
+function drawPlayerIndicator(indicator, fraction) {
+  const step = Math.floor(clamp(fraction, 0, 1) * INDICATOR_STEPS);
+  if (step === indicator.lastStep) return;
+  indicator.lastStep = step;
+
+  const { canvas, context } = indicator;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.lineJoin = 'round';
+  context.lineCap = 'round';
+
+  trianglePath(context, INDICATOR_INNER);
+  context.fillStyle = indicator.color;
+  context.fill();
+  context.strokeStyle = 'rgba(0, 0, 0, 0.28)';
+  context.lineWidth = 5;
+  context.stroke();
+
+  if (step <= 0) {
+    indicator.texture.needsUpdate = true;
+    return;
+  }
+
+  const ready = step >= INDICATOR_STEPS;
+  context.save();
+  if (!ready) {
+    const top = INDICATOR_OUTER[0].y - INDICATOR_STROKE;
+    const bottom = INDICATOR_OUTER[2].y + INDICATOR_STROKE;
+    const clipY = bottom - ((bottom - top) * step) / INDICATOR_STEPS;
+    context.beginPath();
+    context.rect(0, clipY, canvas.width, canvas.height - clipY);
+    context.clip();
+  }
+  trianglePath(context, INDICATOR_OUTER);
+  context.strokeStyle = ready ? INDICATOR_READY_COLOR : INDICATOR_CHARGING_COLOR;
+  context.lineWidth = INDICATOR_STROKE;
+  context.stroke();
+  context.restore();
+
+  indicator.texture.needsUpdate = true;
+}
+
+function trianglePath(context, points) {
+  context.beginPath();
+  context.moveTo(points[0].x, points[0].y);
+  context.lineTo(points[1].x, points[1].y);
+  context.lineTo(points[2].x, points[2].y);
+  context.closePath();
+}
+
+function updatePlayerIndicator(player, pos) {
+  const indicator = player.indicator;
+  if (!indicator) return;
+  drawPlayerIndicator(indicator, player.hero.cooldownFraction);
+  indicator.sprite.position.set(pos.x, player.surfaceY + player.headTop + INDICATOR_GAP_Y, pos.z);
+  indicator.sprite.visible = true;
+}
+
+function disposePlayerIndicator(indicator, scene) {
+  if (!indicator) return;
+  scene.remove(indicator.sprite);
+  indicator.texture.dispose();
+  indicator.sprite.material.dispose();
+}
+
+function meshTopY(mesh) {
+  mesh.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(mesh);
+  return box.isEmpty() ? 2 : box.max.y;
 }
 
 function serializeBody(body) {

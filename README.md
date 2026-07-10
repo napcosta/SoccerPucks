@@ -76,6 +76,7 @@ two to four total players.
 | WASD / Arrows | Move |
 | Space | Shoot |
 | Shift | Hero power (Sam: dash, Tesla: magnet) |
+| Top-right sound control | Mute or adjust sound-effect volume |
 
 ## Gameplay
 

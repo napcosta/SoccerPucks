@@ -65,6 +65,11 @@ export const MATCH = {
 
 export const TEAM = { SPECTATOR: 0, RED: 1, BLUE: 2 };
 
+// Layer for overlay visuals (player indicators) the main camera renders but the
+// ice Reflector must not: its internal virtual camera only has layer 0 enabled,
+// so anything on this layer never shows up in the reflection.
+export const NO_REFLECT_LAYER = 1;
+
 export const TEAM_COLORS = {
   [TEAM.SPECTATOR]: 0x8a94aa,
   [TEAM.RED]: 0xd94f43,

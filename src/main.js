@@ -6,6 +6,7 @@ import { readCommands, setInputLocked } from './input.js';
 import { createHostSession, createGuestSession, normalizeRoomCode, MAX_GUESTS } from './online.js';
 import { initDebugPanel, updatePhysicsOverlay, setIntentOverlay } from './debug.js';
 import { MATCH, TEAM } from './constants.js';
+import { gameAudio } from './audio.js';
 
 initDebugPanel();
 
@@ -16,6 +17,7 @@ const INPUT_RATE = 30;
 const SNAPSHOT_RATE = 45;
 const EMPTY_COMMANDS = Object.freeze({ moveX: 0, moveZ: 0, shoot: false, power: false });
 const HERO_LABELS = Object.freeze({ sam: 'Sam', tesla: 'Tesla' });
+const HERO_POWERS = Object.freeze({ sam: 'Power: Dash', tesla: 'Power: Magnet' });
 const MIN_TIME_LIMIT_SECONDS = 30;
 const MAX_TIME_LIMIT_SECONDS = 15 * 60;
 const MAX_SCORE_LIMIT = 15;
@@ -40,20 +42,20 @@ const hudRoot = document.getElementById('hud');
 const loading = document.getElementById('loading');
 const loadingText = document.getElementById('loading-text');
 const matchHint = document.getElementById('match-hint');
+const soundControls = document.getElementById('sound-controls');
+const soundToggle = document.getElementById('sound-toggle');
+const soundVolume = document.getElementById('sound-volume');
 
 const nicknameInput = document.getElementById('nickname-input');
-const heroPick = document.getElementById('hero-pick');
 const startBtn = document.getElementById('start-btn');
 const hostBtn = document.getElementById('host-btn');
 const joinBtn = document.getElementById('join-btn');
 const localPanel = document.getElementById('local-panel');
-const localStatus = document.getElementById('local-status');
 const startLocalBtn = document.getElementById('start-local-btn');
 const cancelLocalBtn = document.getElementById('cancel-local-btn');
 const localRedRoster = document.getElementById('local-red-roster');
 const localBlueRoster = document.getElementById('local-blue-roster');
 const onlinePanel = document.getElementById('online-panel');
-const onlineTitle = document.getElementById('online-title');
 const onlineStatus = document.getElementById('online-status');
 const primaryCode = document.getElementById('primary-code');
 const primaryCodeLabel = document.getElementById('primary-code-label');
@@ -61,7 +63,8 @@ const copyPrimaryBtn = document.getElementById('copy-primary-btn');
 const startOnlineBtn = document.getElementById('start-online-btn');
 const joinRoomBtn = document.getElementById('join-room-btn');
 const cancelOnlineBtn = document.getElementById('cancel-online-btn');
-const lobbyRoster = document.getElementById('lobby-roster');
+const onlineRedRoster = document.getElementById('online-red-roster');
+const onlineBlueRoster = document.getElementById('online-blue-roster');
 const aiTestBtn = document.getElementById('ai-test-btn');
 const aiTestPanel = document.getElementById('ai-test-panel');
 const aiTestStatus = document.getElementById('ai-test-status');
@@ -88,14 +91,26 @@ const hud = {
   banner: document.getElementById('banner'),
 };
 
+gameAudio.installUnlock(document);
+gameAudio.bindControls(soundToggle, soundVolume);
+soundControls?.addEventListener('keydown', (event) => event.stopPropagation());
+soundControls?.addEventListener('keyup', (event) => event.stopPropagation());
+document.addEventListener('click', (event) => {
+  const target = event.target;
+  const button = target instanceof Element ? target.closest('button') : null;
+  if (button && !button.disabled) gameAudio.play('ui');
+});
+
 const defaultNickname = generateDefaultNickname();
 nicknameInput.value = defaultNickname;
 nicknameInput.addEventListener('input', () => {
   if (isLocalPanelOpen()) renderLocalRoster();
   if (onlineState?.role === 'host' && !onlineState.started) {
     syncHostPlayerInfo();
-    renderHostLobbyRoster();
+    renderOnlineLobby();
     broadcastLobbyState();
+  } else if (onlineState?.role === 'guest' && !onlineState.started && !onlineState.lobbyPlayers.length) {
+    renderOnlineLobby();
   }
 });
 nicknameInput.addEventListener('blur', () => {
@@ -106,15 +121,16 @@ nicknameInput.addEventListener('blur', () => {
 
 let selectedHero = 'sam';
 const localHeroSelections = ['sam', 'tesla', 'tesla', 'sam'];
-for (const btn of document.querySelectorAll('.hero-btn')) {
-  btn.addEventListener('click', () => {
-    document.querySelector('.hero-btn.selected')?.classList.remove('selected');
-    btn.classList.add('selected');
-    selectedHero = normalizeHero(btn.dataset.hero);
-    localHeroSelections[0] = selectedHero;
-    if (isLocalPanelOpen()) renderLocalRoster();
-    syncLocalLobbyInfo();
-  });
+
+function setSelectedHero(heroKind) {
+  selectedHero = normalizeHero(heroKind);
+  localHeroSelections[0] = selectedHero;
+}
+
+function setActiveMode(activeBtn) {
+  for (const btn of [startBtn, hostBtn, joinBtn]) {
+    btn.classList.toggle('selected', btn === activeBtn);
+  }
 }
 
 let selectedLocalTeamSize = 1;
@@ -214,9 +230,9 @@ function showLocalPanel() {
   closeOnlineSession();
   resetOnlinePanel();
   closeAiTestPanel();
+  setActiveMode(startBtn);
   localHeroSelections[0] = normalizeHero(selectedHero);
   localPanel.classList.remove('hidden');
-  heroPick.classList.add('hidden');
   renderLocalRoster();
 }
 
@@ -314,6 +330,7 @@ async function watchAiScenario(scenario) {
     assets,
     hud,
     scoreboard,
+    audio: gameAudio,
     playerSpecs: players,
     localPlayerIndex: 0,
     timeLimitSeconds: matchSettings.timeLimitSeconds,
@@ -352,7 +369,7 @@ async function runAiTests() {
 
 function closeLocalPanel() {
   localPanel.classList.add('hidden');
-  heroPick.classList.remove('hidden');
+  if (startBtn.classList.contains('selected')) setActiveMode(null);
 }
 
 function isLocalPanelOpen() {
@@ -388,6 +405,7 @@ async function startLocalMatch() {
     assets,
     hud,
     scoreboard,
+    audio: gameAudio,
     playerSpecs: players,
     localPlayerIndex: 0,
     timeLimitSeconds: matchSettings.timeLimitSeconds,
@@ -400,6 +418,7 @@ async function startLocalMatch() {
 async function startHostFlow() {
   closeLocalPanel();
   closeAiTestPanel();
+  setActiveMode(hostBtn);
   if (!ensureWebRtcAvailable()) return;
 
   closeOnlineSession();
@@ -420,6 +439,7 @@ async function startHostFlow() {
 function showJoinPanel() {
   closeLocalPanel();
   closeAiTestPanel();
+  setActiveMode(joinBtn);
   if (!ensureWebRtcAvailable()) return;
 
   closeOnlineSession();
@@ -501,6 +521,9 @@ function handleOnlineMessage(role, message, connectionId) {
     if (player) game.spawnPowerFX(player, message.fxType, true);
   } else if (message.type === 'wallFx' && game) {
     if (message.hit) game.spawnWallImpactFX(message.hit, true);
+  } else if (message.type === 'sound') {
+    if (game) game.playSoundEvent(message.event, true);
+    else if (message.event) onlineState.pendingSoundEvents.push(message.event);
   } else if (message.type === 'matchEnded') {
     returnToMenu();
   }
@@ -566,6 +589,7 @@ async function startOnlineGame(role, players, localPlayerIndex = role === 'host'
     assets,
     hud,
     scoreboard,
+    audio: gameAudio,
     playerSpecs: players.map((player, index) => ({
       ...player,
       control: index === safeLocalPlayerIndex ? 'local' : 'remote',
@@ -585,6 +609,9 @@ async function startOnlineGame(role, players, localPlayerIndex = role === 'host'
     game.onWallFxEvent = (hit) => {
       onlineSession?.send({ type: 'wallFx', hit });
     };
+    game.onSoundEvent = (event) => {
+      onlineSession?.send({ type: 'sound', event });
+    };
     installEditableMatchEndHandler();
   }
 
@@ -596,6 +623,9 @@ async function startOnlineGame(role, players, localPlayerIndex = role === 'host'
   if (onlineState.pendingSnapshot) {
     game.applySnapshot(onlineState.pendingSnapshot);
     onlineState.pendingSnapshot = null;
+  }
+  for (const event of onlineState.pendingSoundEvents.splice(0)) {
+    game.playSoundEvent(event, true);
   }
 }
 
@@ -975,6 +1005,7 @@ function createOnlineState(role) {
     },
     guests: [],
     lobbyPlayers: [],
+    guestYouIndex: null,
     remoteCommands: new Map(),
     connectionPlayerIndexes: new Map(),
     inputSeq: 0,
@@ -982,6 +1013,7 @@ function createOnlineState(role) {
     snapshotSeq: 0,
     snapshotAccumulator: 0,
     pendingSnapshot: null,
+    pendingSoundEvents: [],
     players: null,
     matchSettings: defaultMatchSettings(),
   };
@@ -999,7 +1031,6 @@ function closeOnlineSession(clearState = true) {
 function configureHostPanel() {
   syncHostPlayerInfo();
   onlinePanel.classList.remove('hidden');
-  onlineTitle.textContent = 'Host Online';
   primaryCodeLabel.textContent = 'Room Code';
   primaryCode.value = '';
   primaryCode.readOnly = true;
@@ -1008,13 +1039,11 @@ function configureHostPanel() {
   startOnlineBtn.disabled = true;
   startOnlineBtn.textContent = 'Start Match';
   joinRoomBtn.classList.add('hidden');
-  lobbyRoster.classList.remove('hidden');
-  renderHostLobbyRoster();
+  renderOnlineLobby();
 }
 
 function configureJoinPanel() {
   onlinePanel.classList.remove('hidden');
-  onlineTitle.textContent = 'Join Online';
   primaryCodeLabel.textContent = 'Room Code';
   primaryCode.value = '';
   primaryCode.readOnly = false;
@@ -1022,8 +1051,7 @@ function configureJoinPanel() {
   startOnlineBtn.classList.add('hidden');
   startOnlineBtn.disabled = true;
   joinRoomBtn.classList.remove('hidden');
-  lobbyRoster.classList.remove('hidden');
-  lobbyRoster.replaceChildren();
+  renderOnlineLobby();
   setOnlineStatus('Enter room code');
   primaryCode.focus();
 }
@@ -1033,9 +1061,10 @@ function resetOnlinePanel() {
   primaryCode.value = '';
   startOnlineBtn.classList.add('hidden');
   startOnlineBtn.disabled = true;
-  lobbyRoster.classList.add('hidden');
-  lobbyRoster.replaceChildren();
+  onlineRedRoster.replaceChildren();
+  onlineBlueRoster.replaceChildren();
   setOnlineStatus('Idle');
+  if (!startBtn.classList.contains('selected')) setActiveMode(null);
 }
 
 function setOnlineStatus(text) {
@@ -1073,7 +1102,7 @@ function updateHostLobbyStatus() {
   if (!onlineState || onlineState.role !== 'host') return;
 
   syncHostPlayerInfo();
-  renderHostLobbyRoster();
+  renderOnlineLobby();
 
   const guestCount = onlineState.guests.length;
   const playerCount = guestCount + 1;
@@ -1120,11 +1149,15 @@ function sendGuestHello() {
 function broadcastLobbyState() {
   if (!onlineSession || onlineState?.role !== 'host' || onlineState.started) return;
 
-  onlineSession.send({
+  const payload = {
     type: 'lobby',
     players: publicLobbyPlayers(currentHostRoster()),
     canStart: !startOnlineBtn.disabled,
     status: onlineStatus.textContent,
+  };
+  // Roster order is [host, ...guests]; tell each guest which row is theirs.
+  onlineState.guests.forEach((guest, index) => {
+    onlineSession?.sendTo(guest.connectionId, { ...payload, youIndex: index + 1 });
   });
 }
 
@@ -1132,7 +1165,14 @@ function updateGuestLobby(message) {
   if (!onlineState || onlineState.role !== 'guest' || onlineState.started) return;
 
   onlineState.lobbyPlayers = sanitizeLobbyPlayers(message.players);
-  renderLobbyRoster(onlineState.lobbyPlayers, false);
+  const youIndex = Number(message.youIndex);
+  onlineState.guestYouIndex =
+    Number.isInteger(youIndex) && youIndex >= 0 && youIndex < onlineState.lobbyPlayers.length
+      ? youIndex
+      : null;
+  joinRoomBtn.classList.add('hidden');
+  primaryCode.readOnly = true;
+  renderOnlineLobby();
   setOnlineStatus(message.status || 'Waiting for host');
 }
 
@@ -1168,32 +1208,21 @@ function renderLocalRoster() {
     const row = document.createElement('div');
     row.className = 'local-player';
 
-    const details = document.createElement('div');
-    details.className = 'local-player-main';
-
     const name = document.createElement('div');
     name.className = 'local-player-name';
     name.textContent = slot.name;
-
-    const meta = document.createElement('div');
-    meta.className = 'local-player-role';
-    meta.textContent = slot.meta;
-
-    details.appendChild(name);
-    details.appendChild(meta);
+    if (slot.control === 'local') name.appendChild(createRowTag('You'));
 
     const heroes = document.createElement('div');
     heroes.className = 'hero-toggle';
     heroes.appendChild(createLocalHeroButton(slot.selectionIndex, 'sam'));
     heroes.appendChild(createLocalHeroButton(slot.selectionIndex, 'tesla'));
 
-    row.appendChild(details);
+    row.appendChild(name);
     row.appendChild(heroes);
     const roster = slot.team === TEAM.BLUE ? localBlueRoster : localRedRoster;
     roster.appendChild(row);
   }
-
-  updateLocalStatus();
 }
 
 function createLocalHeroButton(selectionIndex, heroKind) {
@@ -1204,12 +1233,10 @@ function createLocalHeroButton(selectionIndex, heroKind) {
   button.classList.toggle('active', localHeroSelections[selectionIndex] === normalizedHero);
   button.setAttribute('aria-pressed', localHeroSelections[selectionIndex] === normalizedHero ? 'true' : 'false');
   button.textContent = heroName(normalizedHero);
+  button.title = HERO_POWERS[normalizedHero];
   button.addEventListener('click', () => {
     localHeroSelections[selectionIndex] = normalizedHero;
-    if (selectionIndex === 0) {
-      selectedHero = normalizedHero;
-      syncHeroPickerSelection();
-    }
+    if (selectionIndex === 0) setSelectedHero(normalizedHero);
     renderLocalRoster();
   });
   return button;
@@ -1221,7 +1248,6 @@ function localRosterSlots(teamSize) {
     {
       selectionIndex: 0,
       name: currentNickname(),
-      meta: 'You',
       team: TEAM.RED,
       teamSlot: 0,
       control: 'local',
@@ -1229,7 +1255,6 @@ function localRosterSlots(teamSize) {
     {
       selectionIndex: 2,
       name: 'AI Opponent',
-      meta: 'AI',
       team: TEAM.BLUE,
       teamSlot: 0,
       control: 'ai',
@@ -1240,7 +1265,6 @@ function localRosterSlots(teamSize) {
     slots.splice(1, 0, {
       selectionIndex: 1,
       name: 'AI Teammate',
-      meta: 'AI',
       team: TEAM.RED,
       teamSlot: 1,
       control: 'ai',
@@ -1248,7 +1272,6 @@ function localRosterSlots(teamSize) {
     slots.push({
       selectionIndex: 3,
       name: 'AI Opponent 2',
-      meta: 'AI',
       team: TEAM.BLUE,
       teamSlot: 1,
       control: 'ai',
@@ -1258,64 +1281,116 @@ function localRosterSlots(teamSize) {
   return slots;
 }
 
-function updateLocalStatus() {
-  const playersPerTeam = normalizeLocalTeamSize(selectedLocalTeamSize);
-  localStatus.textContent = `${playersPerTeam}x${playersPerTeam} ready`;
+function renderOnlineLobby() {
+  if (!onlineState || onlineState.started) return;
+
+  if (onlineState.role === 'host') {
+    renderOnlineRoster(currentHostRoster(), { editable: true, youIndex: 0 });
+  } else if (onlineState.lobbyPlayers.length) {
+    renderOnlineRoster(onlineState.lobbyPlayers, {
+      editable: false,
+      youIndex: onlineState.guestYouIndex,
+    });
+  } else {
+    // Not connected yet - show yourself so hero choice works before joining.
+    renderOnlineRoster(
+      [{ nickname: currentNickname(), heroKind: normalizeHero(selectedHero), team: TEAM.RED }],
+      { editable: false, youIndex: 0 }
+    );
+  }
 }
 
-function renderHostLobbyRoster() {
-  if (!onlineState || onlineState.role !== 'host') return;
+function renderOnlineRoster(players, { editable, youIndex }) {
+  onlineRedRoster.replaceChildren();
+  onlineBlueRoster.replaceChildren();
 
-  renderLobbyRoster(currentHostRoster(), true);
-}
-
-function renderLobbyRoster(players, editable) {
-  lobbyRoster.replaceChildren();
-  lobbyRoster.classList.remove('hidden');
-
-  for (const player of players) {
+  players.forEach((player, index) => {
     const row = document.createElement('div');
-    row.className = 'lobby-row';
-
-    const details = document.createElement('div');
-    details.className = 'lobby-player';
+    row.className = 'local-player';
 
     const name = document.createElement('div');
-    name.className = 'lobby-name';
-    name.textContent = player.nickname;
+    name.className = 'local-player-name';
+    name.textContent = normalizeNickname(player.nickname, `Player ${index + 1}`);
+    if (index === youIndex) name.appendChild(createRowTag('You'));
+    if (player.isHost || player.connectionId === 'host') name.appendChild(createRowTag('Host', 'host'));
 
-    const meta = document.createElement('div');
-    meta.className = 'lobby-meta';
-    meta.textContent = `${heroName(player.heroKind)}${player.isHost || player.connectionId === 'host' ? ' - Host' : ''}`;
+    const controls = document.createElement('div');
+    controls.className = 'local-player-controls';
+    if (index === youIndex) {
+      const heroes = document.createElement('div');
+      heroes.className = 'hero-toggle';
+      heroes.appendChild(createOnlineHeroButton('sam'));
+      heroes.appendChild(createOnlineHeroButton('tesla'));
+      controls.appendChild(heroes);
+    } else {
+      const hero = document.createElement('span');
+      hero.className = 'hero-chip';
+      hero.textContent = heroName(player.heroKind);
+      hero.title = HERO_POWERS[normalizeHero(player.heroKind)];
+      controls.appendChild(hero);
+    }
+    if (editable) controls.appendChild(createTeamSwitchButton(player));
 
-    details.appendChild(name);
-    details.appendChild(meta);
+    row.appendChild(name);
+    row.appendChild(controls);
+    const roster = normalizeTeam(player.team, TEAM.RED) === TEAM.BLUE ? onlineBlueRoster : onlineRedRoster;
+    roster.appendChild(row);
+  });
 
-    const teams = document.createElement('div');
-    teams.className = 'team-toggle';
-    teams.appendChild(createTeamButton(player, TEAM.RED, editable));
-    teams.appendChild(createTeamButton(player, TEAM.BLUE, editable));
-
-    row.appendChild(details);
-    row.appendChild(teams);
-    lobbyRoster.appendChild(row);
-  }
+  appendRosterPlaceholder(onlineRedRoster);
+  appendRosterPlaceholder(onlineBlueRoster);
 }
 
-function createTeamButton(player, team, editable) {
+function createRowTag(label, variant = '') {
+  const tag = document.createElement('span');
+  tag.className = variant ? `local-player-tag ${variant}` : 'local-player-tag';
+  tag.textContent = label;
+  return tag;
+}
+
+function createOnlineHeroButton(heroKind) {
+  const normalizedHero = normalizeHero(heroKind);
+  const active = normalizeHero(selectedHero) === normalizedHero;
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = `team-choice ${teamClass(team)}`;
-  button.classList.toggle('active', player.team === team);
-  button.textContent = teamName(team);
-  button.disabled = !editable;
-  if (editable) {
-    button.addEventListener('click', () => {
-      player.team = team;
-      updateHostLobbyStatus();
-    });
-  }
+  button.className = 'hero-choice';
+  button.classList.toggle('active', active);
+  button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  button.textContent = heroName(normalizedHero);
+  button.title = HERO_POWERS[normalizedHero];
+  button.addEventListener('click', () => {
+    setSelectedHero(normalizedHero);
+    if (onlineState?.role === 'guest') {
+      const you = onlineState.lobbyPlayers[onlineState.guestYouIndex];
+      if (you) you.heroKind = normalizedHero;
+      renderOnlineLobby();
+    }
+    syncLocalLobbyInfo();
+  });
   return button;
+}
+
+function createTeamSwitchButton(player) {
+  const targetTeam = normalizeTeam(player.team, TEAM.RED) === TEAM.BLUE ? TEAM.RED : TEAM.BLUE;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'team-move';
+  button.textContent = '⇄';
+  button.title = `Move to ${teamName(targetTeam)}`;
+  button.setAttribute('aria-label', `Move ${player.nickname} to ${teamName(targetTeam)}`);
+  button.addEventListener('click', () => {
+    player.team = targetTeam;
+    updateHostLobbyStatus();
+  });
+  return button;
+}
+
+function appendRosterPlaceholder(roster) {
+  if (roster.childElementCount) return;
+  const placeholder = document.createElement('div');
+  placeholder.className = 'local-player placeholder';
+  placeholder.textContent = 'Waiting for players...';
+  roster.appendChild(placeholder);
 }
 
 async function copyCode(textarea, successText) {
@@ -1345,12 +1420,6 @@ function normalizeHero(heroKind) {
 
 function heroName(heroKind) {
   return HERO_LABELS[normalizeHero(heroKind)];
-}
-
-function syncHeroPickerSelection() {
-  for (const btn of document.querySelectorAll('.hero-btn')) {
-    btn.classList.toggle('selected', normalizeHero(btn.dataset.hero) === selectedHero);
-  }
 }
 
 function normalizeLocalTeamSize(teamSize) {
@@ -1468,11 +1537,6 @@ function defaultTeamForPlayerIndex(index) {
 function teamName(team) {
   if (team === TEAM.SPECTATOR) return 'Spec';
   return team === TEAM.BLUE ? 'Blue' : 'Red';
-}
-
-function teamClass(team) {
-  if (team === TEAM.SPECTATOR) return 'spectator';
-  return team === TEAM.BLUE ? 'blue' : 'red';
 }
 
 function clamp(value, min, max) {

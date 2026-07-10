@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Soccer Pucks</title>
-<link rel="stylesheet" href="css/style.css?v=ui-polish-1" />
+<link rel="stylesheet" href="css/style.css?v=ui-simple-3" />
 <script type="importmap">
 {
   "imports": {
@@ -16,6 +16,17 @@
 </head>
 <body>
 <canvas id="game-canvas" tabindex="-1"></canvas>
+
+<div id="sound-controls" aria-label="Sound controls">
+  <button id="sound-toggle" type="button" aria-label="Mute sound" aria-pressed="false">
+    <span data-sound-icon aria-hidden="true">&#x1F50A;</span>
+    <span>Sound</span>
+  </button>
+  <label id="sound-volume-label">
+    <span class="visually-hidden">Sound volume</span>
+    <input id="sound-volume" type="range" min="0" max="100" step="1" value="65" />
+  </label>
+</div>
 
 <div id="hud" class="hidden">
   <div id="power-wrap">
@@ -74,27 +85,15 @@
 
 <div id="menu">
   <h1>SOCCER PUCKS</h1>
-  <p class="subtitle">3D arcade soccer &mdash; pick your hero</p>
+  <p class="subtitle">3D arcade soccer</p>
   <label id="nickname-field">
     <span>Nickname</span>
     <input id="nickname-input" type="text" maxlength="16" spellcheck="false" autocomplete="off" />
   </label>
-  <div id="hero-pick">
-    <button class="hero-btn selected" data-hero="sam">
-      <span class="hero-icon" aria-hidden="true">&#x1F4A8;</span>
-      <span class="hero-name">Sam</span>
-      <span class="hero-power">Power: Dash</span>
-    </button>
-    <button class="hero-btn" data-hero="tesla">
-      <span class="hero-icon" aria-hidden="true">&#x26A1;</span>
-      <span class="hero-name">Tesla</span>
-      <span class="hero-power">Power: Magnet</span>
-    </button>
-  </div>
   <div id="mode-actions">
-    <button id="start-btn" class="primary-btn">Local Play</button>
-    <button id="host-btn" class="secondary-btn">Host Online</button>
-    <button id="join-btn" class="secondary-btn">Join Online</button>
+    <button id="start-btn" class="mode-btn">Local Play</button>
+    <button id="host-btn" class="mode-btn">Host Online</button>
+    <button id="join-btn" class="mode-btn">Join Online</button>
   </div>
   <div id="ai-test-panel" class="hidden">
     <div class="online-header">
@@ -109,67 +108,39 @@
     </div>
   </div>
   <div id="local-panel" class="hidden">
-    <div class="online-header">
-      <strong id="local-title">Local Match</strong>
-      <span id="local-status">Choose format and heroes</span>
-    </div>
-    <div id="local-format" class="setup-row">
-      <span id="local-format-label">Format</span>
-      <div id="local-size-pick" role="group" aria-labelledby="local-format-label">
-        <button class="match-size-btn selected" type="button" data-local-size="1" aria-pressed="true">
-          <span class="match-size-count">1x1</span>
-          <span class="match-size-meta">Solo vs AI</span>
-        </button>
-        <button class="match-size-btn" type="button" data-local-size="2" aria-pressed="false">
-          <span class="match-size-count">2x2</span>
-          <span class="match-size-meta">AI teammate</span>
-        </button>
+    <div id="local-setup">
+      <div class="setup-group">
+        <span class="setup-label" id="local-format-label">Format</span>
+        <div id="local-size-pick" role="group" aria-labelledby="local-format-label">
+          <button class="match-size-btn selected" type="button" data-local-size="1" aria-pressed="true">1x1</button>
+          <button class="match-size-btn" type="button" data-local-size="2" aria-pressed="false">2x2</button>
+        </div>
       </div>
-    </div>
-    <div id="local-difficulty" class="setup-row">
-      <span id="local-difficulty-label">AI Difficulty</span>
-      <div id="local-difficulty-pick" role="group" aria-labelledby="local-difficulty-label">
-        <button class="match-size-btn difficulty-btn" type="button" data-difficulty="easy" aria-pressed="false">
-          <span class="match-size-count">Easy</span>
-          <span class="match-size-meta">Relaxed</span>
-        </button>
-        <button class="match-size-btn difficulty-btn selected" type="button" data-difficulty="medium" aria-pressed="true">
-          <span class="match-size-count">Medium</span>
-          <span class="match-size-meta">Classic</span>
-        </button>
-        <button class="match-size-btn difficulty-btn" type="button" data-difficulty="hard" aria-pressed="false">
-          <span class="match-size-count">Hard</span>
-          <span class="match-size-meta">Ruthless</span>
-        </button>
+      <div class="setup-group">
+        <span class="setup-label" id="local-difficulty-label">Difficulty</span>
+        <div id="local-difficulty-pick" role="group" aria-labelledby="local-difficulty-label">
+          <button class="match-size-btn difficulty-btn" type="button" data-difficulty="easy" aria-pressed="false">Easy</button>
+          <button class="match-size-btn difficulty-btn selected" type="button" data-difficulty="medium" aria-pressed="true">Medium</button>
+          <button class="match-size-btn difficulty-btn" type="button" data-difficulty="hard" aria-pressed="false">Hard</button>
+        </div>
       </div>
     </div>
     <div id="local-teams">
-      <section class="local-team red" aria-label="Red team">
-        <div class="local-team-header">
-          <span class="local-team-name">Red Team</span>
-          <span class="local-team-side">Your Side</span>
-        </div>
+      <section class="local-team red" aria-label="Red team, your side">
+        <div class="local-team-name">Red Team</div>
         <div id="local-red-roster" class="local-team-roster"></div>
       </section>
-      <div id="local-versus">VS</div>
-      <section class="local-team blue" aria-label="Blue team">
-        <div class="local-team-header">
-          <span class="local-team-name">Blue Team</span>
-          <span class="local-team-side">Opponents</span>
-        </div>
+      <section class="local-team blue" aria-label="Blue team, opponents">
+        <div class="local-team-name">Blue Team</div>
         <div id="local-blue-roster" class="local-team-roster"></div>
       </section>
     </div>
     <div class="online-actions">
-      <button id="start-local-btn" class="tiny-btn">Start Match</button>
-      <button id="cancel-local-btn" class="tiny-btn danger-btn">Cancel</button>
+      <button id="start-local-btn" class="start-btn" type="button">Start Match</button>
+      <button id="cancel-local-btn" class="tiny-btn" type="button">Cancel</button>
     </div>
   </div>
   <div id="online-panel" class="hidden">
-    <div class="online-header">
-      <strong id="online-title">Online</strong>
-      <span id="online-status">Idle</span>
-    </div>
     <label class="online-field" id="primary-code-field">
       <span id="primary-code-label">Room Code</span>
       <span class="online-code-row">
@@ -177,11 +148,21 @@
         <input id="primary-code" type="text" maxlength="6" spellcheck="false" autocomplete="off" />
       </span>
     </label>
-    <div id="lobby-roster" class="lobby-roster hidden"></div>
+    <div id="online-teams">
+      <section class="local-team red" aria-label="Red team">
+        <div class="local-team-name">Red Team</div>
+        <div id="online-red-roster" class="local-team-roster"></div>
+      </section>
+      <section class="local-team blue" aria-label="Blue team">
+        <div class="local-team-name">Blue Team</div>
+        <div id="online-blue-roster" class="local-team-roster"></div>
+      </section>
+    </div>
     <div class="online-actions">
-      <button id="start-online-btn" class="tiny-btn hidden" disabled>Start Match</button>
-      <button id="join-room-btn" class="tiny-btn hidden">Join Room</button>
-      <button id="cancel-online-btn" class="tiny-btn danger-btn">Cancel</button>
+      <button id="start-online-btn" class="start-btn hidden" disabled>Start Match</button>
+      <button id="join-room-btn" class="start-btn hidden">Join Room</button>
+      <button id="cancel-online-btn" class="tiny-btn">Cancel</button>
+      <span id="online-status">Idle</span>
     </div>
   </div>
   <p class="controls-hint">

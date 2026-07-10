@@ -101,6 +101,7 @@ export class TeslaHero extends HeroBase {
       ball.vz = (dz / dist) * speed + body.vz * 0.5;
       if (isTouching(body, ball, 0.05)) {
         this.captured = true;
+        this.player.onPowerFX?.('magnet_capture');
       }
     }
   }

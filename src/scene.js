@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Reflector } from 'three/addons/objects/Reflector.js';
-import { PITCH, GOAL } from './constants.js';
+import { PITCH, GOAL, NO_REFLECT_LAYER } from './constants.js';
 import { footLift } from './assets.js';
 import { createScoreboard } from './scoreboard.js';
 import { toonGradientMap, disableOutline } from './toon.js';
@@ -23,6 +23,7 @@ export function createCamera() {
   );
   camera.position.set(17, 14, 0);
   camera.lookAt(0, 0, 0);
+  camera.layers.enable(NO_REFLECT_LAYER);
   return camera;
 }
 
