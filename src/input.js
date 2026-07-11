@@ -1,5 +1,6 @@
 const pressed = new Set();
 let inputLocked = false;
+let gameplayActive = false;
 
 const KEYMAP = {
   KeyW: 'up', ArrowUp: 'up',
@@ -10,8 +11,18 @@ const KEYMAP = {
   ShiftLeft: 'power', ShiftRight: 'power',
 };
 
+function isInteractiveTarget(target) {
+  if (!(target instanceof Element)) return false;
+
+  return Boolean(
+    target.closest('input, textarea, select, button')
+    || target.isContentEditable
+    || target.closest('[contenteditable]:not([contenteditable="false"])'),
+  );
+}
+
 window.addEventListener('keydown', (e) => {
-  if (inputLocked) return;
+  if (!gameplayActive || inputLocked || isInteractiveTarget(e.target)) return;
   const action = KEYMAP[e.code];
   if (action) {
     pressed.add(action);
@@ -27,7 +38,9 @@ window.addEventListener('keyup', (e) => {
 window.addEventListener('blur', () => pressed.clear());
 
 export function readCommands() {
-  if (inputLocked) return { moveX: 0, moveZ: 0, shoot: false, power: false };
+  if (!gameplayActive || inputLocked) {
+    return { moveX: 0, moveZ: 0, shoot: false, power: false };
+  }
 
   let x = 0;
   let z = 0;
@@ -51,6 +64,11 @@ export function readCommands() {
 export function setInputLocked(locked) {
   inputLocked = Boolean(locked);
   if (inputLocked) pressed.clear();
+}
+
+export function setGameplayActive(active) {
+  gameplayActive = Boolean(active);
+  if (!gameplayActive) pressed.clear();
 }
 
 export function clearCommands() {

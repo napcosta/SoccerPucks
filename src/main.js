@@ -1,9 +1,15 @@
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { loadAssets } from './assets.js';
 import { createRenderer, createCamera, buildWorld } from './scene.js';
-import { Game } from './game.js';
-import { readCommands, setInputLocked } from './input.js';
-import { createHostSession, createGuestSession, normalizeRoomCode, MAX_GUESTS } from './online.js';
+import { Game } from './game.js?v=ui-focused-9';
+import { readCommands, setGameplayActive, setInputLocked } from './input.js?v=ui-focused-9';
+import {
+  createHostSession,
+  createGuestSession,
+  normalizeRoomCode,
+  MAX_GUESTS,
+  ROOM_CODE_LENGTH,
+} from './online.js?v=ui-focused-9';
 import { initDebugPanel, updatePhysicsOverlay, setIntentOverlay } from './debug.js';
 import { MATCH, TEAM } from './constants.js';
 import { gameAudio } from './audio.js';
@@ -21,6 +27,7 @@ const HERO_POWERS = Object.freeze({ sam: 'Power: Dash', tesla: 'Power: Magnet' }
 const MIN_TIME_LIMIT_SECONDS = 30;
 const MAX_TIME_LIMIT_SECONDS = 15 * 60;
 const MAX_SCORE_LIMIT = 15;
+const NICKNAME_STORAGE_KEY = 'soccer-pucks-nickname';
 const TEAM_SPAWNS = Object.freeze({
   [TEAM.RED]: Object.freeze([
     Object.freeze({ x: 0, z: PLAYER_SPAWN_Z }),
@@ -41,24 +48,39 @@ const menu = document.getElementById('menu');
 const hudRoot = document.getElementById('hud');
 const loading = document.getElementById('loading');
 const loadingText = document.getElementById('loading-text');
+const loadingErrorActions = document.getElementById('loading-error-actions');
+const loadingRetryBtn = document.getElementById('loading-retry-btn');
+const loadingBackBtn = document.getElementById('loading-back-btn');
 const matchHint = document.getElementById('match-hint');
 const soundControls = document.getElementById('sound-controls');
 const soundToggle = document.getElementById('sound-toggle');
 const soundVolume = document.getElementById('sound-volume');
+const uiToast = document.getElementById('ui-toast');
 
 const nicknameInput = document.getElementById('nickname-input');
+const nicknameField = document.getElementById('nickname-field');
+const menuSubtitle = document.getElementById('menu-subtitle');
+const homeActions = document.getElementById('home-actions');
 const startBtn = document.getElementById('start-btn');
+const onlineBtn = document.getElementById('online-btn');
+const onlineChoice = document.getElementById('online-choice');
+const onlineChoiceTitle = document.getElementById('online-choice-title');
+const cancelOnlineChoiceBtn = document.getElementById('cancel-online-choice-btn');
 const hostBtn = document.getElementById('host-btn');
 const joinBtn = document.getElementById('join-btn');
 const localPanel = document.getElementById('local-panel');
+const localPanelTitle = document.getElementById('local-panel-title');
 const startLocalBtn = document.getElementById('start-local-btn');
 const cancelLocalBtn = document.getElementById('cancel-local-btn');
 const localRedRoster = document.getElementById('local-red-roster');
 const localBlueRoster = document.getElementById('local-blue-roster');
 const onlinePanel = document.getElementById('online-panel');
+const onlinePanelTitle = document.getElementById('online-panel-title');
+const onlineLobby = document.getElementById('online-lobby');
 const onlineStatus = document.getElementById('online-status');
 const primaryCode = document.getElementById('primary-code');
 const primaryCodeLabel = document.getElementById('primary-code-label');
+const onlineCodeHelp = document.getElementById('online-code-help');
 const copyPrimaryBtn = document.getElementById('copy-primary-btn');
 const startOnlineBtn = document.getElementById('start-online-btn');
 const joinRoomBtn = document.getElementById('join-room-btn');
@@ -78,6 +100,8 @@ const hostPanelKicker = hostPanel.querySelector('.host-panel-kicker');
 const hostPanelTitle = document.getElementById('host-panel-title');
 const hostPanelClose = document.getElementById('host-panel-close');
 const hostPanelStatus = document.getElementById('host-panel-status');
+const hostPanelAdvanced = document.getElementById('host-panel-advanced');
+const hostAdvancedToggle = document.getElementById('host-advanced-toggle');
 const hostRedRoster = document.getElementById('host-red-roster');
 const hostSpectatorRoster = document.getElementById('host-spectator-roster');
 const hostBlueRoster = document.getElementById('host-blue-roster');
@@ -89,6 +113,8 @@ const hostLeaveBtn = document.getElementById('host-leave-btn');
 const hud = {
   powerFill: document.getElementById('power-fill'),
   powerWrap: document.getElementById('power-wrap'),
+  powerBar: document.getElementById('power-bar'),
+  matchStatus: document.getElementById('match-status'),
   banner: document.getElementById('banner'),
 };
 
@@ -103,7 +129,7 @@ document.addEventListener('click', (event) => {
 });
 
 const defaultNickname = generateDefaultNickname();
-nicknameInput.value = defaultNickname;
+nicknameInput.value = loadSavedNickname() || defaultNickname;
 nicknameInput.addEventListener('input', () => {
   if (isLocalPanelOpen()) renderLocalRoster();
   if (onlineState?.role === 'host' && !onlineState.started) {
@@ -116,6 +142,7 @@ nicknameInput.addEventListener('input', () => {
 });
 nicknameInput.addEventListener('blur', () => {
   nicknameInput.value = currentNickname();
+  saveNickname(nicknameInput.value);
   if (isLocalPanelOpen()) renderLocalRoster();
   syncLocalLobbyInfo();
 });
@@ -128,13 +155,51 @@ function setSelectedHero(heroKind) {
   localHeroSelections[0] = selectedHero;
 }
 
-function setActiveMode(activeBtn) {
-  for (const btn of [startBtn, hostBtn, joinBtn]) {
-    btn.classList.toggle('selected', btn === activeBtn);
-  }
+let currentMenuScreen = 'home';
+
+function showMenuScreen(screen, { focus = true } = {}) {
+  currentMenuScreen = screen;
+  menu.dataset.view = screen;
+
+  homeActions.classList.toggle('hidden', screen !== 'home');
+  localPanel.classList.toggle('hidden', screen !== 'solo');
+  onlineChoice.classList.toggle('hidden', screen !== 'online-choice');
+  onlinePanel.classList.toggle('hidden', screen !== 'online-room');
+  aiTestPanel.classList.toggle('hidden', screen !== 'ai-tests');
+  nicknameField.classList.toggle('hidden', !['solo', 'online-choice', 'online-room'].includes(screen));
+
+  const subtitle = {
+    home: 'Fast 1v1 and 2v2 arcade soccer',
+    solo: 'Solo match setup',
+    'online-choice': 'Play with friends',
+    'online-room': 'Online room',
+    'ai-tests': 'AI simulation tools',
+  }[screen];
+  if (subtitle) menuSubtitle.textContent = subtitle;
+
+  if (!focus) return;
+  const focusTarget = {
+    home: startBtn,
+    solo: localPanelTitle,
+    'online-choice': onlineChoiceTitle,
+    'online-room': onlinePanelTitle,
+    'ai-tests': runAiTestsBtn,
+  }[screen];
+  queueMicrotask(() => focusTarget?.focus?.());
+}
+
+function showHomeScreen({ focus = true } = {}) {
+  showMenuScreen('home', { focus });
+}
+
+function showOnlineChoiceScreen({ focus = true } = {}) {
+  closeOnlineSession();
+  resetOnlinePanel();
+  showMenuScreen('online-choice', { focus });
 }
 
 let selectedLocalTeamSize = 1;
+let selectedLocalTeam = TEAM.RED;
 for (const btn of document.querySelectorAll('#local-size-pick .match-size-btn')) {
   btn.addEventListener('click', () => {
     const previous = document.querySelector('#local-size-pick .match-size-btn.selected');
@@ -143,6 +208,18 @@ for (const btn of document.querySelectorAll('#local-size-pick .match-size-btn'))
     btn.classList.add('selected');
     btn.setAttribute('aria-pressed', 'true');
     selectedLocalTeamSize = normalizeLocalTeamSize(btn.dataset.localSize);
+    if (isLocalPanelOpen()) renderLocalRoster();
+  });
+}
+
+for (const btn of document.querySelectorAll('#local-team-pick .team-choice-btn')) {
+  btn.addEventListener('click', () => {
+    const previous = document.querySelector('#local-team-pick .team-choice-btn.selected');
+    previous?.classList.remove('selected');
+    previous?.setAttribute('aria-pressed', 'false');
+    btn.classList.add('selected');
+    btn.setAttribute('aria-pressed', 'true');
+    selectedLocalTeam = btn.dataset.localTeam === 'blue' ? TEAM.BLUE : TEAM.RED;
     if (isLocalPanelOpen()) renderLocalRoster();
   });
 }
@@ -170,10 +247,14 @@ let scene = null;
 let scoreboard = null;
 let game = null;
 let assets = null;
+let assetRetryAction = null;
 let lastTime = performance.now();
 let localMatchState = null;
 let onlineSession = null;
 let onlineState = null;
+let onlineFlowId = 0;
+let hostPanelFinished = false;
+let hostPanelResultText = '';
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -181,16 +262,56 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-async function ensureAssets() {
-  if (assets) return;
+async function ensureAssets(retryAction = null) {
+  if (assets) {
+    assetRetryAction = null;
+    return;
+  }
+  if (retryAction) assetRetryAction = retryAction;
+  setLoadingBackgroundInert(true);
+  loading.classList.remove('error');
   loading.classList.remove('hidden');
+  loading.setAttribute('aria-busy', 'true');
+  loadingErrorActions.classList.add('hidden');
   loadingText.textContent = 'Loading stadium...';
-  assets = await loadAssets();
-  ({ scene, scoreboard } = buildWorld(assets, outlineEffect));
+  queueMicrotask(() => loadingText.focus());
+  try {
+    assets = await loadAssets();
+    ({ scene, scoreboard } = buildWorld(assets, outlineEffect));
+    assetRetryAction = null;
+    loading.setAttribute('aria-busy', 'false');
+    loading.classList.add('hidden');
+    setLoadingBackgroundInert(false);
+  } catch (err) {
+    assets = null;
+    loading.classList.add('error');
+    loading.setAttribute('aria-busy', 'false');
+    loadingText.textContent = 'Could not load the stadium. Check your connection and try again.';
+    loadingErrorActions.classList.remove('hidden');
+    queueMicrotask(() => loadingRetryBtn.focus());
+    throw err;
+  }
+}
+
+function setLoadingBackgroundInert(inert) {
+  canvas.inert = inert;
+  menu.inert = inert;
+  hudRoot.inert = inert;
+  soundControls.inert = inert;
+}
+
+function dismissLoadingOverlay() {
   loading.classList.add('hidden');
+  loading.classList.remove('error');
+  loading.setAttribute('aria-busy', 'false');
+  loadingErrorActions.classList.add('hidden');
+  setLoadingBackgroundInert(false);
+  assetRetryAction = null;
 }
 
 startBtn.addEventListener('click', showLocalPanel);
+onlineBtn.addEventListener('click', () => showOnlineChoiceScreen());
+cancelOnlineChoiceBtn.addEventListener('click', () => showHomeScreen());
 startLocalBtn.addEventListener('click', startLocalMatch);
 cancelLocalBtn.addEventListener('click', closeLocalPanel);
 aiTestBtn.addEventListener('click', showAiTestPanel);
@@ -198,7 +319,7 @@ runAiTestsBtn.addEventListener('click', runAiTests);
 closeAiTestsBtn.addEventListener('click', closeAiTestPanel);
 hostBtn.addEventListener('click', startHostFlow);
 joinBtn.addEventListener('click', showJoinPanel);
-copyPrimaryBtn.addEventListener('click', () => copyCode(primaryCode, 'Room copied'));
+copyPrimaryBtn.addEventListener('click', () => copyCode(primaryCode, 'Code copied'));
 startOnlineBtn.addEventListener('click', () => {
   startHostedMatch().catch((err) => setOnlineStatus(err.message || 'Could not start match'));
 });
@@ -206,35 +327,85 @@ joinRoomBtn.addEventListener('click', joinRoom);
 cancelOnlineBtn.addEventListener('click', () => {
   closeOnlineSession();
   resetOnlinePanel();
+  showMenuScreen('online-choice');
 });
 hostPanelClose.addEventListener('click', () => closeHostPanel());
+matchHint.addEventListener('click', () => openHostPanel({ advanced: true }));
 hostRestartBtn.addEventListener('click', restartCurrentMatch);
+hostAdvancedToggle.addEventListener('click', toggleHostAdvanced);
 hostLeaveBtn.addEventListener('click', leaveCurrentGame);
-hostTimeLimit.addEventListener('change', applyHostMatchSettings);
-hostScoreLimit.addEventListener('change', applyHostMatchSettings);
+hostTimeLimit.addEventListener('change', stageHostMatchSettings);
+hostScoreLimit.addEventListener('change', stageHostMatchSettings);
 window.addEventListener('keydown', handleHostPanelShortcut, true);
-installHostRosterDropTarget(hostRedRoster, TEAM.RED);
-installHostRosterDropTarget(hostSpectatorRoster, TEAM.SPECTATOR);
-installHostRosterDropTarget(hostBlueRoster, TEAM.BLUE);
+loadingRetryBtn.addEventListener('click', async () => {
+  try {
+    const retryAction = assetRetryAction;
+    if (retryAction) {
+      const retried = await retryAction();
+      if (retried === false && !loading.classList.contains('hidden')) {
+        dismissLoadingOverlay();
+        showMenuScreen(currentMenuScreen);
+      }
+    }
+    else {
+      await ensureAssets();
+      showToast('Stadium ready - start the match when ready');
+      showMenuScreen(currentMenuScreen);
+    }
+  } catch (err) {
+    console.error(err);
+  }
+});
+loadingBackBtn.addEventListener('click', () => {
+  const leavePendingGuestStart = Boolean(
+    assetRetryAction && onlineState?.role === 'guest' && !onlineState.started
+  );
+  dismissLoadingOverlay();
+  if (leavePendingGuestStart) {
+    closeOnlineSession();
+    resetOnlinePanel();
+    showMenuScreen('online-choice');
+    showToast('Left the match after the loading error');
+  } else {
+    showMenuScreen(currentMenuScreen);
+  }
+});
 primaryCode.addEventListener('input', () => {
   const normalized = normalizeRoomCode(primaryCode.value);
   if (primaryCode.value !== normalized) primaryCode.value = normalized;
+  updateJoinCodeValidity();
 });
 primaryCode.addEventListener('keydown', (event) => {
   if (event.code === 'Enter' && !joinRoomBtn.classList.contains('hidden')) {
     event.preventDefault();
+    if (joinRoomBtn.disabled) {
+      if (!primaryCode.hasAttribute('aria-busy')) validateRoomCode();
+      return;
+    }
     joinRoom();
   }
 });
+showHomeScreen({ focus: false });
+replayStartupAction();
+
+function replayStartupAction() {
+  const startup = window.__soccerPucksStartup;
+  const action = typeof startup?.consume === 'function' ? startup.consume() : null;
+  startBtn.removeAttribute('aria-busy');
+  onlineBtn.removeAttribute('aria-busy');
+  delete window.__soccerPucksStartup;
+
+  if (action === 'solo') showLocalPanel();
+  else if (action === 'online') showOnlineChoiceScreen();
+}
 
 function showLocalPanel() {
   closeOnlineSession();
   resetOnlinePanel();
-  closeAiTestPanel();
-  setActiveMode(startBtn);
+  aiTestPanel.classList.add('hidden');
   localHeroSelections[0] = normalizeHero(selectedHero);
-  localPanel.classList.remove('hidden');
   renderLocalRoster();
+  showMenuScreen('solo');
 }
 
 let aiSimModule = null;
@@ -244,10 +415,9 @@ async function loadAiSimModule() {
 }
 
 async function showAiTestPanel() {
-  closeLocalPanel();
   closeOnlineSession();
   resetOnlinePanel();
-  aiTestPanel.classList.remove('hidden');
+  showMenuScreen('ai-tests');
   aiTestPanel.scrollIntoView({ block: 'nearest' });
 
   if (!aiTestScenarios.childElementCount) {
@@ -262,7 +432,8 @@ async function showAiTestPanel() {
 }
 
 function closeAiTestPanel() {
-  aiTestPanel.classList.add('hidden');
+  if (currentMenuScreen === 'ai-tests') showHomeScreen();
+  else aiTestPanel.classList.add('hidden');
 }
 
 function renderAiScenarioList(scenarios) {
@@ -297,9 +468,8 @@ async function watchAiScenario(scenario) {
   resetOnlinePanel();
 
   try {
-    await ensureAssets();
+    await ensureAssets(() => watchAiScenario(scenario));
   } catch (err) {
-    loadingText.textContent = 'Failed to load assets - serve this folder over HTTP.';
     console.error(err);
     return;
   }
@@ -369,12 +539,12 @@ async function runAiTests() {
 }
 
 function closeLocalPanel() {
-  localPanel.classList.add('hidden');
-  if (startBtn.classList.contains('selected')) setActiveMode(null);
+  if (currentMenuScreen === 'solo') showHomeScreen();
+  else localPanel.classList.add('hidden');
 }
 
 function isLocalPanelOpen() {
-  return !localPanel.classList.contains('hidden');
+  return currentMenuScreen === 'solo' && !localPanel.classList.contains('hidden');
 }
 
 async function startLocalMatch() {
@@ -382,9 +552,8 @@ async function startLocalMatch() {
   resetOnlinePanel();
 
   try {
-    await ensureAssets();
+    await ensureAssets(startLocalMatch);
   } catch (err) {
-    loadingText.textContent = 'Failed to load assets - serve this folder over HTTP.';
     console.error(err);
     return;
   }
@@ -417,30 +586,31 @@ async function startLocalMatch() {
 }
 
 async function startHostFlow() {
-  closeLocalPanel();
-  closeAiTestPanel();
-  setActiveMode(hostBtn);
   if (!ensureWebRtcAvailable()) return;
 
   closeOnlineSession();
-  onlineState = createOnlineState('host');
+  const state = createOnlineState('host');
+  onlineState = state;
+  const flowId = onlineFlowId;
   configureHostPanel();
 
   try {
     setOnlineStatus('Creating room...');
-    onlineSession = await createHostSession(createOnlineHandlers('host'));
-    primaryCode.value = onlineSession.roomCode;
+    const session = await createHostSession(createOnlineHandlers('host', flowId, state));
+    if (!isCurrentOnlineFlow(flowId, state)) {
+      session.close();
+      return;
+    }
+    onlineSession = session;
+    primaryCode.value = session.roomCode;
     updateHostLobbyStatus();
   } catch (err) {
+    if (!isCurrentOnlineFlow(flowId, state)) return;
     setOnlineStatus(err.message || 'Could not create room');
-    closeOnlineSession();
   }
 }
 
 function showJoinPanel() {
-  closeLocalPanel();
-  closeAiTestPanel();
-  setActiveMode(joinBtn);
   if (!ensureWebRtcAvailable()) return;
 
   closeOnlineSession();
@@ -449,34 +619,54 @@ function showJoinPanel() {
 }
 
 async function joinRoom() {
-  if (!primaryCode.value.trim()) {
-    setOnlineStatus('Enter a room code');
+  if (!validateRoomCode()) {
     return;
   }
 
   closeOnlineSession(false);
   const teamChoice = onlineState?.guestTeam ?? null;
-  onlineState = createOnlineState('guest');
-  onlineState.guestTeam = teamChoice;
+  const state = createOnlineState('guest');
+  onlineState = state;
+  state.guestTeam = teamChoice;
+  const flowId = onlineFlowId;
 
   try {
     setOnlineStatus('Joining room...');
-    onlineSession = await createGuestSession(primaryCode.value, createOnlineHandlers('guest'));
-    primaryCode.value = onlineSession.roomCode;
+    joinRoomBtn.disabled = true;
+    primaryCode.setAttribute('aria-busy', 'true');
+    const session = await createGuestSession(primaryCode.value, createOnlineHandlers('guest', flowId, state));
+    if (!isCurrentOnlineFlow(flowId, state)) {
+      session.close();
+      return;
+    }
+    onlineSession = session;
+    primaryCode.value = session.roomCode;
   } catch (err) {
+    if (!isCurrentOnlineFlow(flowId, state)) return;
     setOnlineStatus(err.message || 'Could not join room');
     onlineSession = null;
+    primaryCode.setAttribute('aria-invalid', 'true');
+    primaryCode.focus();
+  } finally {
+    if (!isCurrentOnlineFlow(flowId, state)) return;
+    primaryCode.removeAttribute('aria-busy');
+    updateJoinCodeValidity();
   }
 }
 
-function createOnlineHandlers(role) {
+function createOnlineHandlers(role, flowId, state) {
+  const isCurrent = () => isCurrentOnlineFlow(flowId, state);
   return {
-    shouldAcceptConnection: () => !(role === 'host' && onlineState?.started),
-    onStatus: setOnlineStatus,
+    shouldAcceptConnection: () =>
+      isCurrent() && !(role === 'host' && (onlineState?.started || onlineState?.starting)),
+    onStatus: (text) => {
+      if (isCurrent()) setOnlineStatus(text);
+    },
     onRoomCode: (roomCode) => {
-      primaryCode.value = roomCode;
+      if (isCurrent()) primaryCode.value = roomCode;
     },
     onOpen: (_session, _connection, connectionId) => {
+      if (!isCurrent()) return;
       if (role === 'guest') {
         sendGuestHello();
         setOnlineStatus('Connected - waiting for host');
@@ -484,12 +674,20 @@ function createOnlineHandlers(role) {
         setOnlineStatus('Player connecting...');
       }
     },
-    onMessage: (message, _session, _connection, connectionId) =>
-      handleOnlineMessage(role, message, connectionId),
-    onConnectionClose: (_session, _connection, connectionId) =>
-      handleOnlineConnectionClose(role, connectionId),
-    onClose: () => handleOnlineClose(),
+    onMessage: (message, _session, _connection, connectionId) => {
+      if (isCurrent()) handleOnlineMessage(role, message, connectionId);
+    },
+    onConnectionClose: (_session, _connection, connectionId) => {
+      if (isCurrent()) handleOnlineConnectionClose(role, connectionId);
+    },
+    onClose: () => {
+      if (isCurrent()) handleOnlineClose();
+    },
   };
+}
+
+function isCurrentOnlineFlow(flowId, state) {
+  return flowId === onlineFlowId && onlineState === state;
 }
 
 function handleOnlineMessage(role, message, connectionId) {
@@ -511,14 +709,22 @@ function handleOnlineMessage(role, message, connectionId) {
     startGuestMatch(message.players, message.localPlayerIndex, message.settings).catch((err) =>
       setOnlineStatus(err.message || 'Could not start match')
     );
-  } else if (message.type === 'roomFull') {
-    setOnlineStatus('Room is full');
+  } else if (message.type === 'roomFull' || message.type === 'roomUnavailable') {
     closeOnlineSession(false);
+    setOnlineStatus(message.type === 'roomFull' ? 'Room is full' : 'Room is already playing');
+    primaryCode.readOnly = false;
+    primaryCode.removeAttribute('aria-busy');
+    joinRoomBtn.classList.remove('hidden');
+    updateJoinCodeValidity();
+    primaryCode.focus();
   } else if (message.type === 'lobby') {
     updateGuestLobby(message);
   } else if (message.type === 'snapshot') {
-    if (game) game.applySnapshot(message);
-    else onlineState.pendingSnapshot = message;
+    if (game) {
+      const wasShowingResult = hostPanelFinished && game.state === 'over';
+      game.applySnapshot(message);
+      if (wasShowingResult && game.state !== 'over') closeHostPanel();
+    } else onlineState.pendingSnapshot = message;
   } else if (message.type === 'fx' && game) {
     const player = game.players[message.playerIndex];
     if (player) game.spawnPowerFX(player, message.fxType, true);
@@ -527,65 +733,105 @@ function handleOnlineMessage(role, message, connectionId) {
   } else if (message.type === 'sound') {
     if (game) game.playSoundEvent(message.event, true);
     else if (message.event) onlineState.pendingSoundEvents.push(message.event);
+  } else if (message.type === 'matchFinished') {
+    openHostPanel({ finished: true, resultText: String(message.resultText || 'Match finished') });
   } else if (message.type === 'matchEnded') {
     returnToMenu();
   }
 }
 
 async function startHostedMatch() {
-  if (!onlineState || onlineState.role !== 'host' || onlineState.started) return;
+  const state = onlineState;
+  const session = onlineSession;
+  const flowId = onlineFlowId;
+  if (!state || state.role !== 'host' || state.started || state.starting || !session) return false;
 
   syncHostPlayerInfo();
-  const guests = onlineState.guests.slice(0, MAX_GUESTS);
-  const roster = currentHostRoster();
-  if (guests.length < 1) {
+  if (state.guests.length < 1 || !hasBothActiveTeams(currentHostRoster())) {
     updateHostLobbyStatus();
-    return;
+    return false;
   }
 
-  const players = buildOnlinePlayers(roster);
+  state.starting = true;
+  updateHostLobbyStatus();
 
-  onlineState.connectionPlayerIndexes.clear();
-  onlineState.remoteCommands.clear();
-  guests.forEach((guest, index) => {
-    const playerIndex = index + 1;
-    onlineState.connectionPlayerIndexes.set(guest.connectionId, playerIndex);
-    onlineState.remoteCommands.set(playerIndex, { ...EMPTY_COMMANDS });
-  });
+  try {
+    await ensureAssets(startHostedMatch);
+    if (!isCurrentOnlineFlow(flowId, state) || onlineSession !== session) return false;
 
-  const settings = normalizeMatchSettings(onlineState.matchSettings);
+    // Finalize the roster only after loading, while new connections are rejected.
+    syncHostPlayerInfo();
+    const guests = state.guests.slice(0, MAX_GUESTS);
+    const roster = currentHostRoster();
+    if (guests.length < 1 || !hasBothActiveTeams(roster)) {
+      state.starting = false;
+      updateHostLobbyStatus();
+      return false;
+    }
 
-  await startOnlineGame('host', players, 0, settings);
-  guests.forEach((guest, index) => {
-    onlineSession?.sendTo(guest.connectionId, {
-      type: 'start',
-      players,
-      localPlayerIndex: index + 1,
-      settings,
+    const players = buildOnlinePlayers(roster);
+    state.connectionPlayerIndexes.clear();
+    state.remoteCommands.clear();
+    guests.forEach((guest, index) => {
+      const playerIndex = index + 1;
+      state.connectionPlayerIndexes.set(guest.connectionId, playerIndex);
+      state.remoteCommands.set(playerIndex, { ...EMPTY_COMMANDS });
     });
-  });
+
+    const settings = normalizeMatchSettings(state.matchSettings);
+    const started = await startOnlineGame('host', players, 0, settings);
+    if (!started || !isCurrentOnlineFlow(flowId, state) || onlineSession !== session) return false;
+
+    guests.forEach((guest, index) => {
+      session.sendTo(guest.connectionId, {
+        type: 'start',
+        players,
+        localPlayerIndex: index + 1,
+        settings,
+      });
+    });
+    return true;
+  } catch (err) {
+    if (isCurrentOnlineFlow(flowId, state)) {
+      state.starting = false;
+      updateHostLobbyStatus();
+      throw err;
+    }
+    return false;
+  }
 }
 
 async function startGuestMatch(players, localPlayerIndex = 1, settings = null) {
-  if (!onlineState || onlineState.started) return;
+  if (!onlineState || onlineState.started || onlineState.role !== 'guest' || !onlineSession) {
+    dismissLoadingOverlay();
+    return false;
+  }
   const sanitizedPlayers = sanitizePlayers(players);
-  await startOnlineGame('guest', sanitizedPlayers, localPlayerIndex, settings);
+  return startOnlineGame('guest', sanitizedPlayers, localPlayerIndex, settings);
 }
 
 async function startOnlineGame(role, players, localPlayerIndex = role === 'host' ? 0 : 1, settings = null) {
+  const state = onlineState;
+  const session = onlineSession;
+  const flowId = onlineFlowId;
+  const retryAction =
+    role === 'host'
+      ? startHostedMatch
+      : () => startGuestMatch(players, localPlayerIndex, settings);
   try {
-    await ensureAssets();
+    await ensureAssets(retryAction);
   } catch (err) {
-    loadingText.textContent = 'Failed to load assets - serve this folder over HTTP.';
+    if (!isCurrentOnlineFlow(flowId, state) || onlineSession !== session) return false;
     throw err;
   }
+  if (!isCurrentOnlineFlow(flowId, state) || onlineSession !== session || !state) return false;
 
   enterGameView();
   game?.dispose();
   localMatchState = null;
 
   const safeLocalPlayerIndex = clampPlayerIndex(localPlayerIndex, players.length);
-  const matchSettings = normalizeMatchSettings(settings ?? onlineState?.matchSettings);
+  const matchSettings = normalizeMatchSettings(settings ?? state.matchSettings);
   game = new Game({
     scene,
     camera,
@@ -600,36 +846,39 @@ async function startOnlineGame(role, players, localPlayerIndex = role === 'host'
     localPlayerIndex: safeLocalPlayerIndex,
     authoritative: role === 'host',
     inputProvider: (_player, index) =>
-      onlineState?.remoteCommands.get(index) ?? EMPTY_COMMANDS,
+      state.remoteCommands.get(index) ?? EMPTY_COMMANDS,
     timeLimitSeconds: matchSettings.timeLimitSeconds,
     scoreLimit: matchSettings.scoreLimit,
   });
 
   if (role === 'host') {
     game.onFxEvent = (playerIndex, fxType) => {
-      onlineSession?.send({ type: 'fx', playerIndex, fxType });
+      session.send({ type: 'fx', playerIndex, fxType });
     };
     game.onWallFxEvent = (hit) => {
-      onlineSession?.send({ type: 'wallFx', hit });
+      session.send({ type: 'wallFx', hit });
     };
     game.onSoundEvent = (event) => {
-      onlineSession?.send({ type: 'sound', event });
+      session.send({ type: 'sound', event });
     };
     installEditableMatchEndHandler();
   }
+  matchHint.classList.remove('hidden');
 
-  onlineState.players = players;
-  onlineState.matchSettings = normalizeMatchSettings(game.getMatchSettings());
-  onlineState.started = true;
+  state.players = players;
+  state.matchSettings = normalizeMatchSettings(game.getMatchSettings());
+  state.started = true;
+  state.starting = false;
   setOnlineStatus(role === 'host' ? 'Match started' : 'Playing online');
 
-  if (onlineState.pendingSnapshot) {
-    game.applySnapshot(onlineState.pendingSnapshot);
-    onlineState.pendingSnapshot = null;
+  if (state.pendingSnapshot) {
+    game.applySnapshot(state.pendingSnapshot);
+    state.pendingSnapshot = null;
   }
-  for (const event of onlineState.pendingSoundEvents.splice(0)) {
+  for (const event of state.pendingSoundEvents.splice(0)) {
     game.playSoundEvent(event, true);
   }
+  return true;
 }
 
 function enterGameView() {
@@ -637,64 +886,130 @@ function enterGameView() {
   menu.classList.add('hidden');
   matchHint.classList.add('hidden');
   hudRoot.classList.remove('hidden');
+  setGameplayActive(true);
   document.activeElement?.blur?.();
   canvas.focus?.();
 }
 
 function returnToMenu() {
   closeHostPanel({ focusCanvas: false });
+  setGameplayActive(false);
   game?.dispose();
   game = null;
   localMatchState = null;
   hudRoot.classList.add('hidden');
   menu.classList.remove('hidden');
-  closeLocalPanel();
   closeOnlineSession();
   resetOnlinePanel();
+  showHomeScreen();
 }
 
 function handleHostPanelShortcut(event) {
+  if (event.code === 'Tab' && isHostPanelOpen()) {
+    trapHostPanelFocus(event);
+    return;
+  }
   if (event.code !== 'Escape') return;
+  if (event.repeat && (isHostPanelOpen() || canOpenHostPanel())) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
 
   if (isHostPanelOpen()) {
     event.preventDefault();
     event.stopPropagation();
-    closeHostPanel();
+    if (!hostPanelFinished) closeHostPanel();
     return;
   }
 
   if (!canOpenHostPanel()) return;
   event.preventDefault();
   event.stopPropagation();
-  openHostPanel();
+  openHostPanel({ advanced: true });
 }
 
 function canOpenHostPanel() {
-  return Boolean(game && currentEditableMatchState());
+  return Boolean(
+    game && (currentEditableMatchState() || (onlineState?.role === 'guest' && onlineState.started))
+  );
 }
 
-function openHostPanel() {
+function openHostPanel({ finished = false, resultText = '', advanced = false } = {}) {
   if (!canOpenHostPanel()) return;
+  hostPanelFinished = Boolean(finished);
+  hostPanelResultText = resultText;
+  const editable = Boolean(currentEditableMatchState());
+  const showAdvanced = Boolean(advanced && editable);
+
   syncHostPanelHeading();
-  syncHostPanelInputs();
-  renderHostPanel();
-  setHostPanelStatus('Ready');
+  hostPanelClose.classList.toggle('hidden', hostPanelFinished);
+  hostRestartBtn.classList.toggle('hidden', !editable);
+  hostAdvancedToggle.classList.toggle('hidden', !editable);
+  hostRestartBtn.textContent = hostPanelFinished ? 'Rematch' : 'Restart Match';
+  hostAdvancedToggle.textContent = hostPanelFinished ? 'Change setup' : 'Advanced match setup';
+  hostLeaveBtn.textContent = hostPanelFinished ? 'Main menu' : 'Leave Game';
+  hostPanelAdvanced.classList.toggle('hidden', !showAdvanced);
+  hostAdvancedToggle.setAttribute('aria-expanded', String(showAdvanced));
+
+  if (editable) {
+    syncHostPanelInputs();
+    renderHostPanel();
+  }
+  setHostPanelStatus(hostPanelFinished ? hostPanelResultText || 'Match finished' : 'Ready');
   hostPanel.classList.remove('hidden');
   hostPanel.setAttribute('aria-hidden', 'false');
+  canvas.inert = true;
+  hudRoot.inert = true;
+  soundControls.inert = true;
   setInputLocked(true);
-  hostPanelClose.focus();
+  setGameplayActive(false);
+  let focusTarget = hostPanelClose;
+  if (hostPanelFinished) focusTarget = editable ? hostRestartBtn : hostLeaveBtn;
+  else if (showAdvanced) focusTarget = hostTimeLimit;
+  focusTarget.focus();
 }
 
 function closeHostPanel({ focusCanvas = true } = {}) {
   const wasOpen = isHostPanelOpen();
   hostPanel.classList.add('hidden');
   hostPanel.setAttribute('aria-hidden', 'true');
+  canvas.inert = false;
+  hudRoot.inert = false;
+  soundControls.inert = false;
   setInputLocked(false);
+  if (game) setGameplayActive(true);
   if (wasOpen && focusCanvas) canvas.focus?.();
+  hostPanelFinished = false;
+  hostPanelResultText = '';
 }
 
 function isHostPanelOpen() {
   return !hostPanel.classList.contains('hidden');
+}
+
+function toggleHostAdvanced() {
+  const expanded = hostAdvancedToggle.getAttribute('aria-expanded') === 'true';
+  hostAdvancedToggle.setAttribute('aria-expanded', String(!expanded));
+  hostPanelAdvanced.classList.toggle('hidden', expanded);
+  if (!expanded) queueMicrotask(() => hostTimeLimit.focus());
+}
+
+function trapHostPanelFocus(event) {
+  const focusable = Array.from(
+    hostPanel.querySelectorAll('button:not([disabled]):not(.hidden), input:not([disabled]), select:not([disabled])')
+  ).filter((element) => !element.closest('.hidden'));
+  if (!focusable.length) return;
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 function renderHostPanel() {
@@ -721,10 +1036,7 @@ function renderHostPanel() {
 function createHostPlayerRow(player, index) {
   const row = document.createElement('div');
   row.className = 'host-player-row';
-  row.draggable = true;
   row.dataset.playerIndex = String(index);
-  row.addEventListener('dragstart', handleHostRosterDragStart);
-  row.addEventListener('dragend', handleHostRosterDragEnd);
 
   const details = document.createElement('div');
   details.className = 'host-player-main';
@@ -750,6 +1062,9 @@ function createHostPlayerRow(player, index) {
   heroes.appendChild(createHostHeroButton(index, player.heroKind, 'tesla'));
 
   controls.appendChild(heroes);
+  controls.appendChild(
+    createTeamSelectControl(player, `host-team-${index}`, (team) => stageHostPlayerTeam(index, team))
+  );
 
   row.appendChild(details);
   row.appendChild(controls);
@@ -760,11 +1075,12 @@ function createHostHeroButton(playerIndex, currentHero, heroKind) {
   const normalizedHero = normalizeHero(heroKind);
   const button = document.createElement('button');
   button.type = 'button';
+  button.id = `host-hero-${playerIndex}-${normalizedHero}`;
   button.className = 'hero-choice';
   button.classList.toggle('active', normalizeHero(currentHero) === normalizedHero);
+  button.setAttribute('aria-pressed', normalizeHero(currentHero) === normalizedHero ? 'true' : 'false');
   button.textContent = heroName(normalizedHero);
-  button.disabled = normalizeHero(currentHero) === normalizedHero;
-  button.addEventListener('click', () => setHostPlayerHero(playerIndex, normalizedHero));
+  button.addEventListener('click', () => setHostPlayerHero(playerIndex, normalizedHero, button.id));
   return button;
 }
 
@@ -781,39 +1097,39 @@ function hostRosterForTeam(team) {
   return hostRedRoster;
 }
 
-function installHostRosterDropTarget(target, team) {
-  target.dataset.team = String(team);
-  target.addEventListener('dragover', (event) => {
-    event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-    target.classList.add('drag-over');
-  });
-  target.addEventListener('dragleave', (event) => {
-    if (!target.contains(event.relatedTarget)) target.classList.remove('drag-over');
-  });
-  target.addEventListener('drop', (event) => {
-    event.preventDefault();
-    target.classList.remove('drag-over');
-    const rawPlayerIndex = event.dataTransfer?.getData('text/plain') ?? '';
-    if (!rawPlayerIndex) return;
-    const playerIndex = Number(rawPlayerIndex);
-    if (Number.isInteger(playerIndex)) stageHostPlayerTeam(playerIndex, team);
-  });
+function createTeamSelectControl(player, id, onChange) {
+  const label = document.createElement('label');
+  label.className = 'team-select-wrap';
+
+  const labelText = document.createElement('span');
+  labelText.className = 'team-select-label';
+  labelText.textContent = 'Team';
+
+  const select = document.createElement('select');
+  select.id = id;
+  select.className = 'team-select';
+  select.setAttribute('aria-label', `Team for ${normalizeNickname(player?.nickname)}`);
+  for (const [value, text] of [
+    [TEAM.RED, 'Red'],
+    [TEAM.BLUE, 'Blue'],
+    [TEAM.SPECTATOR, 'Spectate'],
+  ]) {
+    const option = document.createElement('option');
+    option.value = String(value);
+    option.textContent = text;
+    select.appendChild(option);
+  }
+  select.value = String(normalizeTeam(player?.team, TEAM.RED));
+  select.addEventListener('change', () => onChange(normalizeTeam(select.value, TEAM.RED)));
+
+  label.appendChild(labelText);
+  label.appendChild(select);
+  return label;
 }
 
-function handleHostRosterDragStart(event) {
-  const row = event.currentTarget;
-  if (!event.dataTransfer) return;
-  event.dataTransfer.effectAllowed = 'move';
-  event.dataTransfer.setData('text/plain', row.dataset.playerIndex || '');
-  row.classList.add('dragging');
-}
-
-function handleHostRosterDragEnd(event) {
-  event.currentTarget.classList.remove('dragging');
-  hostRedRoster.classList.remove('drag-over');
-  hostSpectatorRoster.classList.remove('drag-over');
-  hostBlueRoster.classList.remove('drag-over');
+function focusElementById(id) {
+  if (!id) return;
+  queueMicrotask(() => document.getElementById(id)?.focus());
 }
 
 function stageHostPlayerTeam(playerIndex, team) {
@@ -828,10 +1144,11 @@ function stageHostPlayerTeam(playerIndex, team) {
   const assigned = assignPlayerSpawns(roster);
   matchState.players = assigned;
   renderHostPanel();
+  focusElementById(`host-team-${playerIndex}`);
   setHostPanelStatus('Roster staged - restart to apply');
 }
 
-function setHostPlayerHero(playerIndex, heroKind) {
+function setHostPlayerHero(playerIndex, heroKind, focusId = '') {
   const matchState = currentEditableMatchState();
   if (!game || !matchState?.players?.[playerIndex]) return;
 
@@ -843,6 +1160,7 @@ function setHostPlayerHero(playerIndex, heroKind) {
   const assigned = assignPlayerSpawns(roster);
   matchState.players = assigned;
   renderHostPanel();
+  focusElementById(focusId);
   setHostPanelStatus('Hero staged - restart to apply');
 }
 
@@ -870,13 +1188,13 @@ function normalizeStartedPlayer(player, index) {
 function syncHostPanelInputs() {
   const matchState = currentEditableMatchState();
   if (!game || !matchState) return;
-  const settings = normalizeMatchSettings(game.getMatchSettings());
+  const settings = normalizeMatchSettings(matchState.matchSettings ?? game.getMatchSettings());
   matchState.matchSettings = settings;
   hostTimeLimit.value = formatTimeLimitMinutes(settings.timeLimitSeconds);
   hostScoreLimit.value = String(settings.scoreLimit);
 }
 
-function applyHostMatchSettings() {
+function stageHostMatchSettings({ announce = true } = {}) {
   const matchState = currentEditableMatchState();
   if (!game || !matchState) return;
 
@@ -886,9 +1204,9 @@ function applyHostMatchSettings() {
     scoreLimit: parseScoreLimit(hostScoreLimit.value, current.scoreLimit),
   });
   matchState.matchSettings = settings;
-  game.setMatchSettings(settings);
-  syncHostPanelInputs();
-  setHostPanelStatus('Settings updated');
+  hostTimeLimit.value = formatTimeLimitMinutes(settings.timeLimitSeconds);
+  hostScoreLimit.value = String(settings.scoreLimit);
+  if (announce) setHostPanelStatus('Settings staged - restart to apply');
 }
 
 function restartCurrentMatch() {
@@ -896,7 +1214,7 @@ function restartCurrentMatch() {
   if (!game || !matchState) return;
 
   if (isHostPanelOpen()) {
-    applyHostMatchSettings();
+    stageHostMatchSettings({ announce: false });
   }
 
   const roster = assignPlayerSpawns(
@@ -904,10 +1222,17 @@ function restartCurrentMatch() {
       ...normalizeStartedPlayer(player, index),
     }))
   );
+  if (!hasBothActiveTeams(roster)) {
+    setHostPanelStatus('Assign at least one player to Red and Blue');
+    hostPanelAdvanced.classList.remove('hidden');
+    hostAdvancedToggle.setAttribute('aria-expanded', 'true');
+    return;
+  }
   matchState.players = roster;
   if (currentMatchPanelMode() === 'online-host') syncStartedRosterToOnlineState(roster);
   game.setPlayerLayout(roster);
 
+  game.setMatchSettings(matchState.matchSettings);
   matchState.matchSettings = normalizeMatchSettings(game.getMatchSettings());
   game.restartMatch();
   installEditableMatchEndHandler();
@@ -935,8 +1260,11 @@ function installEditableMatchEndHandler() {
 function handleEditableMatchFinished() {
   if (!game || !currentEditableMatchState()) return;
   game.onMatchEnd = null;
-  openHostPanel();
-  setHostPanelStatus('Match finished - restart when ready');
+  const resultText = currentMatchResultText();
+  if (onlineState?.role === 'host' && onlineState.started) {
+    onlineSession?.send({ type: 'matchFinished', resultText });
+  }
+  openHostPanel({ finished: true, resultText });
 }
 
 function currentEditableMatchState() {
@@ -950,24 +1278,39 @@ function currentMatchPanelMode() {
   if (!game) return null;
   if (localMatchState?.started) return 'local';
   if (onlineState?.role === 'host' && onlineState.started) return 'online-host';
+  if (onlineState?.role === 'guest' && onlineState.started) return 'online-guest';
   return null;
 }
 
 function syncHostPanelHeading() {
   const mode = currentMatchPanelMode();
-  hostPanelKicker.textContent = mode === 'local' ? 'Local Match' : 'Host Room';
-  hostPanelTitle.textContent = 'Match Controls';
+  hostPanelKicker.textContent =
+    mode === 'local' ? 'Solo Match' : mode === 'online-host' ? 'Host Room' : 'Online Match';
+  hostPanelTitle.textContent = hostPanelFinished ? 'Match Finished' : 'Game Menu';
+}
+
+function currentMatchResultText() {
+  const red = Number(game?.score?.[TEAM.RED]) || 0;
+  const blue = Number(game?.score?.[TEAM.BLUE]) || 0;
+  if (red === blue) return `Draw, ${red}-${blue}`;
+  return `${red > blue ? 'Red' : 'Blue'} wins, ${red}-${blue}`;
 }
 
 function matchPanelRoleLabel(player, index) {
   const mode = currentMatchPanelMode();
   if (mode === 'local') return player.control === 'local' ? 'You' : 'AI';
-  if (mode === 'online-host') return index === 0 ? 'Host' : 'Guest';
+  if (mode === 'online-host') {
+    if (player.control === 'ai') return 'AI substitute';
+    return index === 0 ? 'Host' : 'Guest';
+  }
   return '';
 }
 
 function handleOnlineClose() {
   const wasPlaying = onlineState?.started;
+  const previousRole = onlineState?.role;
+  const previousStatus = onlineStatus.textContent.trim();
+  onlineFlowId += 1;
   closeHostPanel({ focusCanvas: false });
   onlineSession = null;
   onlineState = null;
@@ -977,8 +1320,20 @@ function handleOnlineClose() {
     setTimeout(() => {
       if (game) returnToMenu();
     }, 1400);
+  } else if (previousRole === 'host') {
+    const message = /unavailable|failed|could not/i.test(previousStatus) ? previousStatus : 'Room closed';
+    resetOnlinePanel();
+    showMenuScreen('online-choice');
+    showToast(message);
   } else {
-    setOnlineStatus('Disconnected');
+    const keepSpecificError = /not found|unavailable|full|failed|could not|invalid/i.test(previousStatus);
+    setOnlineStatus(keepSpecificError ? previousStatus : 'Disconnected');
+    onlineLobby.classList.add('hidden');
+    primaryCode.readOnly = false;
+    primaryCode.removeAttribute('aria-busy');
+    joinRoomBtn.classList.remove('hidden');
+    updateJoinCodeValidity();
+    if (currentMenuScreen === 'online-room') primaryCode.focus();
   }
 }
 
@@ -986,9 +1341,25 @@ function handleOnlineConnectionClose(role, connectionId) {
   if (role !== 'host' || !onlineState) return;
 
   if (onlineState.started) {
-    onlineSession?.send({ type: 'matchEnded' });
-    onlineSession?.close();
-    handleOnlineClose();
+    const playerIndex = onlineState.connectionPlayerIndexes.get(connectionId);
+    onlineState.connectionPlayerIndexes.delete(connectionId);
+    onlineState.remoteCommands.delete(playerIndex);
+    if (playerIndex != null && onlineState.players?.[playerIndex] && game) {
+      const roster = onlineState.players.map((player, index) => normalizeStartedPlayer(player, index));
+      const departed = roster[playerIndex];
+      departed.control = 'ai';
+      departed.nickname = normalizeNickname(`${departed.nickname} AI`, `AI Player ${playerIndex}`);
+      onlineState.players = assignPlayerSpawns(roster);
+      if (onlineState.guests[playerIndex - 1]) {
+        Object.assign(onlineState.guests[playerIndex - 1], departed, { disconnected: true });
+      }
+      game.setPlayerLayout(onlineState.players);
+      game.showBanner('PLAYER LEFT - AI TAKES OVER', 1.8, '#ffd84a');
+      if (isHostPanelOpen()) {
+        renderHostPanel();
+        setHostPanelStatus('A disconnected player was replaced by AI');
+      }
+    }
     return;
   }
 
@@ -1000,6 +1371,7 @@ function createOnlineState(role) {
   return {
     role,
     started: false,
+    starting: false,
     hostPlayer: {
       connectionId: 'host',
       nickname: currentNickname(),
@@ -1024,65 +1396,104 @@ function createOnlineState(role) {
 }
 
 function closeOnlineSession(clearState = true) {
-  if (onlineSession) {
-    const session = onlineSession;
-    onlineSession = null;
-    session.close();
-  }
+  onlineFlowId += 1;
+  const session = onlineSession;
+  onlineSession = null;
   if (clearState) onlineState = null;
+  session?.close();
 }
 
 function configureHostPanel() {
   syncHostPlayerInfo();
-  onlinePanel.classList.remove('hidden');
-  primaryCodeLabel.textContent = 'Room Code';
+  onlinePanelTitle.textContent = 'Create Room';
+  primaryCodeLabel.textContent = 'Room code';
   primaryCode.value = '';
   primaryCode.readOnly = true;
+  onlineCodeHelp.textContent = 'Share this code with the players joining your room.';
+  primaryCode.removeAttribute('aria-invalid');
   copyPrimaryBtn.classList.remove('hidden');
   startOnlineBtn.classList.remove('hidden');
   startOnlineBtn.disabled = true;
   startOnlineBtn.textContent = 'Start Match';
   joinRoomBtn.classList.add('hidden');
+  onlineLobby.classList.remove('hidden');
+  showMenuScreen('online-room');
   renderOnlineLobby();
 }
 
 function configureJoinPanel() {
-  onlinePanel.classList.remove('hidden');
-  primaryCodeLabel.textContent = 'Room Code';
+  onlinePanelTitle.textContent = 'Join Room';
+  primaryCodeLabel.textContent = 'Room code';
   primaryCode.value = '';
   primaryCode.readOnly = false;
+  onlineCodeHelp.textContent = 'Enter all six characters, for example ABC234.';
+  primaryCode.removeAttribute('aria-invalid');
   copyPrimaryBtn.classList.add('hidden');
   startOnlineBtn.classList.add('hidden');
   startOnlineBtn.disabled = true;
   joinRoomBtn.classList.remove('hidden');
-  renderOnlineLobby();
-  setOnlineStatus('Enter room code');
-  primaryCode.focus();
+  joinRoomBtn.disabled = true;
+  onlineLobby.classList.add('hidden');
+  setOnlineStatus('Enter a six-character room code');
+  showMenuScreen('online-room', { focus: false });
+  updateJoinCodeValidity();
+  queueMicrotask(() => primaryCode.focus());
 }
 
 function resetOnlinePanel() {
   onlinePanel.classList.add('hidden');
+  onlineLobby.classList.add('hidden');
   primaryCode.value = '';
+  primaryCode.readOnly = false;
+  onlineCodeHelp.textContent = 'Enter all six characters, for example ABC234.';
+  primaryCode.removeAttribute('aria-invalid');
+  primaryCode.removeAttribute('aria-busy');
   startOnlineBtn.classList.add('hidden');
   startOnlineBtn.disabled = true;
+  joinRoomBtn.classList.add('hidden');
+  joinRoomBtn.disabled = true;
   onlineRedRoster.replaceChildren();
   onlineSpectatorRoster.replaceChildren();
   onlineBlueRoster.replaceChildren();
   setOnlineStatus('Idle');
-  if (!startBtn.classList.contains('selected')) setActiveMode(null);
 }
 
 function setOnlineStatus(text) {
   onlineStatus.textContent = text;
 }
 
+function updateJoinCodeValidity() {
+  if (joinRoomBtn.classList.contains('hidden')) return;
+  const valid = normalizeRoomCode(primaryCode.value).length === ROOM_CODE_LENGTH;
+  joinRoomBtn.disabled = !valid || Boolean(onlineSession);
+  if (valid) primaryCode.removeAttribute('aria-invalid');
+}
+
+function validateRoomCode() {
+  const code = normalizeRoomCode(primaryCode.value);
+  primaryCode.value = code;
+  if (code.length === ROOM_CODE_LENGTH) {
+    primaryCode.removeAttribute('aria-invalid');
+    return true;
+  }
+
+  primaryCode.setAttribute('aria-invalid', 'true');
+  setOnlineStatus(`Enter all ${ROOM_CODE_LENGTH} room-code characters`);
+  primaryCode.focus();
+  return false;
+}
+
 function registerGuest(connectionId, message) {
   if (!connectionId || !onlineState || onlineState.role !== 'host' || onlineState.started) return;
+  const existingGuest = onlineState.guests.find((guest) => guest.connectionId === connectionId);
+  if (onlineState.starting) {
+    if (!existingGuest) onlineSession?.disconnect(connectionId, { type: 'roomUnavailable' });
+    return;
+  }
 
   const normalizedHero = normalizeHero(message?.heroKind);
   const nickname = normalizeNickname(message?.nickname, `Guest ${onlineState.guests.length + 1}`);
   const requestedTeam = message?.team == null ? null : normalizeTeam(message.team, null);
-  const existingGuest = onlineState.guests.find((guest) => guest.connectionId === connectionId);
   if (existingGuest) {
     existingGuest.heroKind = normalizedHero;
     existingGuest.nickname = nickname;
@@ -1113,18 +1524,28 @@ function updateHostLobbyStatus() {
 
   const guestCount = onlineState.guests.length;
   const playerCount = guestCount + 1;
-  const canStart = guestCount > 0 && !onlineState.started;
+  const validTeams = hasBothActiveTeams(currentHostRoster());
+  const canStart = guestCount > 0 && validTeams && !onlineState.started && !onlineState.starting;
 
   startOnlineBtn.disabled = !canStart;
   startOnlineBtn.textContent = playerCount > 2 ? `Start ${playerCount} Players` : 'Start Match';
 
-  if (guestCount === 0) {
+  if (onlineState.starting) {
+    setOnlineStatus('Preparing match...');
+  } else if (guestCount === 0) {
     setOnlineStatus(`Waiting for players (0/${MAX_GUESTS})`);
+  } else if (!validTeams) {
+    setOnlineStatus('Assign at least one player to Red and Blue');
   } else {
     setOnlineStatus(`${guestCount}/${MAX_GUESTS} joined`);
   }
 
   broadcastLobbyState();
+}
+
+function hasBothActiveTeams(players) {
+  const teams = new Set((players || []).map((player) => normalizeTeam(player?.team, TEAM.RED)));
+  return teams.has(TEAM.RED) && teams.has(TEAM.BLUE);
 }
 
 function syncLocalLobbyInfo() {
@@ -1185,6 +1606,8 @@ function updateGuestLobby(message) {
   if (you) onlineState.guestTeam = you.team;
   joinRoomBtn.classList.add('hidden');
   primaryCode.readOnly = true;
+  primaryCode.removeAttribute('aria-busy');
+  primaryCode.removeAttribute('aria-invalid');
   renderOnlineLobby();
   setOnlineStatus(message.status || 'Waiting for host');
 }
@@ -1226,13 +1649,13 @@ function renderLocalRoster() {
     name.textContent = slot.name;
     if (slot.control === 'local') name.appendChild(createRowTag('You'));
 
-    const heroes = document.createElement('div');
-    heroes.className = 'hero-toggle';
-    heroes.appendChild(createLocalHeroButton(slot.selectionIndex, 'sam'));
-    heroes.appendChild(createLocalHeroButton(slot.selectionIndex, 'tesla'));
+    const heroControl = document.createElement('div');
+    heroControl.className = 'hero-toggle';
+    heroControl.appendChild(createLocalHeroButton(slot.selectionIndex, 'sam'));
+    heroControl.appendChild(createLocalHeroButton(slot.selectionIndex, 'tesla'));
 
     row.appendChild(name);
-    row.appendChild(heroes);
+    row.appendChild(heroControl);
     const roster = slot.team === TEAM.BLUE ? localBlueRoster : localRedRoster;
     roster.appendChild(row);
   }
@@ -1242,6 +1665,7 @@ function createLocalHeroButton(selectionIndex, heroKind) {
   const normalizedHero = normalizeHero(heroKind);
   const button = document.createElement('button');
   button.type = 'button';
+  button.id = `local-hero-${selectionIndex}-${normalizedHero}`;
   button.className = 'hero-choice';
   button.classList.toggle('active', localHeroSelections[selectionIndex] === normalizedHero);
   button.setAttribute('aria-pressed', localHeroSelections[selectionIndex] === normalizedHero ? 'true' : 'false');
@@ -1251,24 +1675,27 @@ function createLocalHeroButton(selectionIndex, heroKind) {
     localHeroSelections[selectionIndex] = normalizedHero;
     if (selectionIndex === 0) setSelectedHero(normalizedHero);
     renderLocalRoster();
+    focusElementById(button.id);
   });
   return button;
 }
 
 function localRosterSlots(teamSize) {
   const playersPerTeam = normalizeLocalTeamSize(teamSize);
+  const playerTeam = selectedLocalTeam === TEAM.BLUE ? TEAM.BLUE : TEAM.RED;
+  const opponentTeam = playerTeam === TEAM.BLUE ? TEAM.RED : TEAM.BLUE;
   const slots = [
     {
       selectionIndex: 0,
       name: currentNickname(),
-      team: TEAM.RED,
+      team: playerTeam,
       teamSlot: 0,
       control: 'local',
     },
     {
       selectionIndex: 2,
       name: 'AI Opponent',
-      team: TEAM.BLUE,
+      team: opponentTeam,
       teamSlot: 0,
       control: 'ai',
     },
@@ -1278,14 +1705,14 @@ function localRosterSlots(teamSize) {
     slots.splice(1, 0, {
       selectionIndex: 1,
       name: 'AI Teammate',
-      team: TEAM.RED,
+      team: playerTeam,
       teamSlot: 1,
       control: 'ai',
     });
     slots.push({
       selectionIndex: 3,
       name: 'AI Opponent 2',
-      team: TEAM.BLUE,
+      team: opponentTeam,
       teamSlot: 1,
       control: 'ai',
     });
@@ -1298,24 +1725,19 @@ function renderOnlineLobby() {
   if (!onlineState || onlineState.started) return;
 
   if (onlineState.role === 'host') {
+    onlineLobby.classList.remove('hidden');
     renderOnlineRoster(currentHostRoster(), { editable: true, youIndex: 0 });
   } else if (onlineState.lobbyPlayers.length) {
+    onlineLobby.classList.remove('hidden');
     renderOnlineRoster(onlineState.lobbyPlayers, {
       editable: false,
       youIndex: onlineState.guestYouIndex,
     });
   } else {
-    // Not connected yet - show yourself so hero and team choice work before joining.
-    renderOnlineRoster(
-      [
-        {
-          nickname: currentNickname(),
-          heroKind: normalizeHero(selectedHero),
-          team: onlineState.guestTeam ?? TEAM.RED,
-        },
-      ],
-      { editable: false, youIndex: 0 }
-    );
+    onlineLobby.classList.add('hidden');
+    onlineRedRoster.replaceChildren();
+    onlineSpectatorRoster.replaceChildren();
+    onlineBlueRoster.replaceChildren();
   }
 }
 
@@ -1339,10 +1761,19 @@ function renderOnlineRoster(players, { editable, youIndex }) {
     if (player.isHost || player.connectionId === 'host') name.appendChild(createRowTag('Host', 'host'));
     top.appendChild(name);
 
-    // Host can move anyone; a guest can move only themselves.
-    let moveArrows = null;
+    // The host can assign anyone; a guest can choose only their own team.
+    let teamControl = null;
     if (editable || index === youIndex) {
-      moveArrows = createMoveArrows(player, team, editable);
+      const teamControlId = `lobby-team-${index}`;
+      teamControl = createTeamSelectControl(player, teamControlId, (targetTeam) => {
+        if (editable) {
+          player.team = targetTeam;
+          updateHostLobbyStatus();
+          focusElementById(teamControlId);
+        } else {
+          setGuestTeam(targetTeam, teamControlId);
+        }
+      });
     }
 
     const controls = document.createElement('div');
@@ -1363,7 +1794,7 @@ function renderOnlineRoster(players, { editable, youIndex }) {
 
     row.appendChild(top);
     row.appendChild(controls);
-    if (moveArrows) row.appendChild(moveArrows);
+    if (teamControl) row.appendChild(teamControl);
     const roster =
       team === TEAM.BLUE ? onlineBlueRoster : team === TEAM.SPECTATOR ? onlineSpectatorRoster : onlineRedRoster;
     roster.appendChild(row);
@@ -1374,50 +1805,13 @@ function renderOnlineRoster(players, { editable, youIndex }) {
   appendRosterPlaceholder(onlineBlueRoster, 'Waiting for players...');
 }
 
-const LOBBY_COLUMN_ORDER = Object.freeze([TEAM.RED, TEAM.SPECTATOR, TEAM.BLUE]);
-
-function createMoveArrows(player, team, editable) {
-  const wrap = document.createElement('span');
-  wrap.className = 'move-arrows';
-  const position = LOBBY_COLUMN_ORDER.indexOf(team);
-  if (position > 0) {
-    wrap.appendChild(createMoveArrowButton(player, LOBBY_COLUMN_ORDER[position - 1], '◄', 'left', editable));
-  }
-  if (position < LOBBY_COLUMN_ORDER.length - 1) {
-    wrap.appendChild(createMoveArrowButton(player, LOBBY_COLUMN_ORDER[position + 1], '►', 'right', editable));
-  }
-  return wrap;
-}
-
-function createMoveArrowButton(player, targetTeam, glyph, direction, editable) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = `move-arrow ${direction}`;
-  button.textContent = glyph;
-  button.title = `Move to ${lobbyTeamLabel(targetTeam)}`;
-  button.setAttribute('aria-label', `Move ${player.nickname} to ${lobbyTeamLabel(targetTeam)}`);
-  button.addEventListener('click', () => {
-    if (editable) {
-      player.team = targetTeam;
-      updateHostLobbyStatus();
-    } else {
-      setGuestTeam(targetTeam);
-    }
-  });
-  return button;
-}
-
-function lobbyTeamLabel(team) {
-  if (team === TEAM.SPECTATOR) return 'Spectators';
-  return team === TEAM.BLUE ? 'Blue Team' : 'Red Team';
-}
-
-function setGuestTeam(team) {
+function setGuestTeam(team, focusId = '') {
   if (!onlineState || onlineState.role !== 'guest' || onlineState.started) return;
   onlineState.guestTeam = normalizeTeam(team, TEAM.RED);
   const you = onlineState.lobbyPlayers[onlineState.guestYouIndex];
   if (you) you.team = onlineState.guestTeam;
   renderOnlineLobby();
+  focusElementById(focusId);
   sendGuestHello();
 }
 
@@ -1433,6 +1827,7 @@ function createOnlineHeroButton(heroKind) {
   const active = normalizeHero(selectedHero) === normalizedHero;
   const button = document.createElement('button');
   button.type = 'button';
+  button.id = `online-hero-${normalizedHero}`;
   button.className = 'hero-choice';
   button.classList.toggle('active', active);
   button.setAttribute('aria-pressed', active ? 'true' : 'false');
@@ -1444,6 +1839,7 @@ function createOnlineHeroButton(heroKind) {
       const you = onlineState.lobbyPlayers[onlineState.guestYouIndex];
       if (you) you.heroKind = normalizedHero;
       renderOnlineLobby();
+      focusElementById(button.id);
     }
     syncLocalLobbyInfo();
   });
@@ -1463,7 +1859,7 @@ async function copyCode(textarea, successText) {
 
   try {
     await navigator.clipboard.writeText(textarea.value);
-    setOnlineStatus(successText);
+    showToast(successText);
   } catch {
     textarea.focus();
     textarea.select();
@@ -1471,10 +1867,17 @@ async function copyCode(textarea, successText) {
   }
 }
 
+let toastTimer = 0;
+function showToast(text) {
+  clearTimeout(toastTimer);
+  uiToast.textContent = text;
+  uiToast.classList.remove('hidden');
+  toastTimer = window.setTimeout(() => uiToast.classList.add('hidden'), 1800);
+}
+
 function ensureWebRtcAvailable() {
   if ('RTCPeerConnection' in window) return true;
-  onlinePanel.classList.remove('hidden');
-  setOnlineStatus('WebRTC is unavailable');
+  showToast('Online play is unavailable in this browser');
   return false;
 }
 
@@ -1523,6 +1926,22 @@ function generateDefaultNickname() {
   const bytes = new Uint8Array(1);
   crypto.getRandomValues(bytes);
   return `Player ${100 + (bytes[0] % 900)}`;
+}
+
+function loadSavedNickname() {
+  try {
+    return normalizeNickname(localStorage.getItem(NICKNAME_STORAGE_KEY), '');
+  } catch {
+    return '';
+  }
+}
+
+function saveNickname(nickname) {
+  try {
+    localStorage.setItem(NICKNAME_STORAGE_KEY, normalizeNickname(nickname, defaultNickname));
+  } catch {
+    // Storage can be unavailable in privacy-restricted browsing contexts.
+  }
 }
 
 function currentNickname() {
@@ -1711,7 +2130,8 @@ function frame(now) {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
 
-  if (game) game.update(dt);
+  const soloPaused = Boolean(localMatchState?.started && isHostPanelOpen());
+  if (game && !soloPaused) game.update(dt);
   updateOnlineTransport(dt);
   scoreboard?.syncPosition();
   updatePhysicsOverlay(game, dt);

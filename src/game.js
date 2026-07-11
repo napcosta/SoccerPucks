@@ -11,7 +11,7 @@ import {
   isTouching,
   goalScored,
 } from './physics.js';
-import { readCommands } from './input.js';
+import { readCommands } from './input.js?v=ui-focused-9';
 import { computeAICommands, createTeamAIState, resetTeamAIState, AI_DIFFICULTY } from './ai.js';
 import { createHero } from './heroes.js';
 import { cloneHeroScene, tintHero, footLift } from './assets.js';
@@ -359,6 +359,11 @@ export class Game {
     if (player.spawnX !== spawnX || player.spawnZ !== spawnZ) {
       player.spawnX = spawnX;
       player.spawnZ = spawnZ;
+      changed = true;
+    }
+
+    if (['local', 'remote', 'ai'].includes(spec.control) && player.control !== spec.control) {
+      player.control = spec.control;
       changed = true;
     }
 
@@ -862,6 +867,23 @@ export class Game {
     const powerFraction = local && isPlayerActive(local) ? local.hero.cooldownFraction : 0;
     this.hud.powerFill.style.width = `${powerFraction * 100}%`;
     this.hud.powerWrap?.classList.toggle('ready', powerFraction >= 1);
+
+    const powerValue = String(Math.round(powerFraction * 100));
+    if (this.hud.powerBar?.getAttribute('aria-valuenow') !== powerValue) {
+      this.hud.powerBar?.setAttribute('aria-valuenow', powerValue);
+    }
+
+    if (this.hud.matchStatus) {
+      const totalSeconds = Math.max(0, Math.ceil(this.timeLeft));
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = String(totalSeconds % 60).padStart(2, '0');
+      const clockStatus = this.goldenGoal ? 'Golden goal.' : `Time ${minutes}:${seconds}.`;
+      const matchStatus =
+        `Red ${this.score[TEAM.RED]}, Blue ${this.score[TEAM.BLUE]}. ${clockStatus}`;
+      if (this.hud.matchStatus.textContent !== matchStatus) {
+        this.hud.matchStatus.textContent = matchStatus;
+      }
+    }
   }
 
   showBanner(text, duration, color = '#ffffff') {

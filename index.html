@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Soccer Pucks</title>
-<link rel="stylesheet" href="css/style.css?v=ui-simple-5" />
+<link rel="stylesheet" href="css/style.css?v=ui-focused-14" />
 <script type="importmap">
 {
   "imports": {
@@ -13,9 +13,44 @@
   }
 }
 </script>
+<script>
+(() => {
+  const startup = { pendingAction: null };
+  const captureHomeAction = (event) => {
+    const button = event.target instanceof Element
+      ? event.target.closest('[data-startup-action]')
+      : null;
+    const action = button?.dataset.startupAction;
+    if (!button || startup.pendingAction || !['solo', 'online'].includes(action)) return;
+
+    startup.pendingAction = action;
+    document.documentElement.dataset.startupPending = action;
+    button.setAttribute('aria-busy', 'true');
+  };
+
+  startup.consume = () => {
+    document.removeEventListener('click', captureHomeAction, true);
+    delete document.documentElement.dataset.startupPending;
+    const action = startup.pendingAction;
+    startup.pendingAction = null;
+    return action;
+  };
+
+  window.__soccerPucksStartup = startup;
+  document.addEventListener('click', captureHomeAction, true);
+})();
+</script>
 </head>
 <body>
-<canvas id="game-canvas" tabindex="-1"></canvas>
+<canvas
+  id="game-canvas"
+  tabindex="-1"
+  aria-label="Soccer Pucks game field"
+  aria-describedby="game-instructions match-status"
+></canvas>
+<p id="game-instructions" class="visually-hidden">
+  Use W A S D or the arrow keys to move, Space to shoot, Shift to use your power, and Escape to open the game menu.
+</p>
 
 <div id="sound-controls" aria-label="Sound controls">
   <button id="sound-toggle" type="button" aria-label="Mute sound" aria-pressed="false">
@@ -27,14 +62,25 @@
     <input id="sound-volume" type="range" min="0" max="100" step="1" value="65" />
   </label>
 </div>
+<div id="ui-toast" class="ui-toast hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <div id="hud" class="hidden">
+  <div id="match-status" class="visually-hidden" aria-atomic="true"></div>
   <div id="power-wrap">
     <span id="power-label">Power</span>
-    <div id="power-bar"><div id="power-fill"></div></div>
+    <div
+      id="power-bar"
+      role="progressbar"
+      aria-labelledby="power-label"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      aria-valuenow="100"
+    ><div id="power-fill"></div></div>
   </div>
-  <div id="match-hint" class="hidden"><kbd>Esc</kbd> Match settings</div>
-  <div id="banner" class="hidden"></div>
+  <button id="match-hint" class="hidden" type="button" aria-label="Open game menu">
+    <kbd>Esc</kbd> Game menu
+  </button>
+  <div id="banner" class="hidden" role="status" aria-live="assertive" aria-atomic="true"></div>
 </div>
 
 <div id="host-panel" class="hidden" aria-hidden="true">
@@ -42,58 +88,80 @@
     <div class="host-panel-header">
       <div>
         <span class="host-panel-kicker">Host Room</span>
-        <h2 id="host-panel-title">Match Controls</h2>
+        <h2 id="host-panel-title">Game Menu</h2>
       </div>
-      <button id="host-panel-close" class="tiny-btn" type="button">Resume</button>
+      <button id="host-panel-close" class="tiny-btn" type="button">Back to Match</button>
     </div>
-    <div id="host-panel-status">Ready</div>
-    <div class="host-panel-grid">
-      <section class="host-team-card red" aria-label="Red team">
-        <div class="host-team-title">Red</div>
-        <div id="host-red-roster" class="host-team-roster"></div>
-      </section>
-      <section class="host-team-card spectator" aria-label="Spectators">
-        <div class="host-team-title">Spectators</div>
-        <div id="host-spectator-roster" class="host-team-roster"></div>
-      </section>
-      <section class="host-team-card blue" aria-label="Blue team">
-        <div class="host-team-title">Blue</div>
-        <div id="host-blue-roster" class="host-team-roster"></div>
-      </section>
-      <section class="host-settings-card" aria-label="Match settings">
-        <div class="host-team-title">Match</div>
-        <label class="host-setting">
-          <span>Time limit</span>
-          <span class="host-number-field">
-            <input id="host-time-limit" type="number" min="0.5" max="15" step="0.1" inputmode="decimal" />
-            <span>min</span>
-          </span>
-        </label>
-        <label class="host-setting">
-          <span>Score limit</span>
-          <span class="host-number-field">
-            <input id="host-score-limit" type="number" min="0" max="15" step="1" inputmode="numeric" />
-            <span>goals</span>
-          </span>
-        </label>
-        <button id="host-restart-btn" class="tiny-btn" type="button">Restart Match</button>
-        <button id="host-leave-btn" class="tiny-btn danger-btn" type="button">Leave Game</button>
-      </section>
+    <div id="host-panel-status" role="status" aria-live="polite" aria-atomic="true">Ready</div>
+    <div class="host-panel-actions">
+      <button id="host-restart-btn" class="tiny-btn" type="button">Restart Match</button>
+      <button
+        id="host-advanced-toggle"
+        class="tiny-btn"
+        type="button"
+        aria-expanded="false"
+        aria-controls="host-panel-advanced"
+      >Advanced match setup</button>
+      <button id="host-leave-btn" class="tiny-btn danger-btn" type="button">Leave Game</button>
+    </div>
+    <div id="host-panel-advanced" class="hidden">
+      <p class="host-panel-help">Team, hero, and rule changes apply when the match restarts.</p>
+      <div class="host-panel-grid">
+        <section class="host-team-card red" aria-label="Red team">
+          <div class="host-team-title">Red</div>
+          <div id="host-red-roster" class="host-team-roster"></div>
+        </section>
+        <section class="host-team-card spectator" aria-label="Spectators">
+          <div class="host-team-title">Spectators</div>
+          <div id="host-spectator-roster" class="host-team-roster"></div>
+        </section>
+        <section class="host-team-card blue" aria-label="Blue team">
+          <div class="host-team-title">Blue</div>
+          <div id="host-blue-roster" class="host-team-roster"></div>
+        </section>
+        <section class="host-settings-card" aria-label="Match settings">
+          <div class="host-team-title">Match</div>
+          <label class="host-setting">
+            <span>Time limit</span>
+            <span class="host-number-field">
+              <input id="host-time-limit" type="number" min="0.5" max="15" step="0.1" inputmode="decimal" />
+              <span>min</span>
+            </span>
+          </label>
+          <label class="host-setting">
+            <span>Score limit</span>
+            <span class="host-number-field">
+              <input id="host-score-limit" type="number" min="0" max="15" step="1" inputmode="numeric" />
+              <span>goals</span>
+            </span>
+          </label>
+        </section>
+      </div>
     </div>
   </div>
 </div>
 
 <div id="menu">
   <h1>SOCCER PUCKS</h1>
-  <p class="subtitle">3D arcade soccer</p>
-  <label id="nickname-field">
+  <p class="subtitle" id="menu-subtitle">Fast 1v1 and 2v2 arcade soccer</p>
+  <div id="home-actions" class="menu-screen">
+    <button id="start-btn" class="mode-btn" type="button" data-startup-action="solo">Play Solo</button>
+    <button id="online-btn" class="mode-btn" type="button" data-startup-action="online">Play Online</button>
+  </div>
+  <label id="nickname-field" class="hidden">
     <span>Nickname</span>
     <input id="nickname-input" type="text" maxlength="16" spellcheck="false" autocomplete="off" />
   </label>
-  <div id="mode-actions">
-    <button id="start-btn" class="mode-btn">Local Play</button>
-    <button id="host-btn" class="mode-btn">Host Online</button>
-    <button id="join-btn" class="mode-btn">Join Online</button>
+  <div id="online-choice" class="menu-screen focused-panel hidden" aria-labelledby="online-choice-title">
+    <div class="focused-panel-header">
+      <h2 id="online-choice-title" tabindex="-1">Play Online</h2>
+      <p>Create a room for friends or join with a six-character code.</p>
+    </div>
+    <div id="mode-actions">
+      <button id="join-btn" class="mode-btn primary" type="button">Join Room</button>
+      <button id="host-btn" class="mode-btn secondary" type="button">Create Room</button>
+    </div>
+    <button id="cancel-online-choice-btn" class="tiny-btn back-btn" type="button">Back</button>
   </div>
   <div id="ai-test-panel" class="hidden">
     <div class="online-header">
@@ -108,12 +176,23 @@
     </div>
   </div>
   <div id="local-panel" class="hidden">
+    <div class="focused-panel-header">
+      <h2 id="local-panel-title" tabindex="-1">Solo Match</h2>
+      <p>Choose your team, format, and AI difficulty.</p>
+    </div>
     <div id="local-setup">
+      <div class="setup-group">
+        <span class="setup-label" id="local-team-label">Your team</span>
+        <div id="local-team-pick" role="group" aria-labelledby="local-team-label">
+          <button class="match-size-btn team-choice-btn selected" type="button" data-local-team="red" aria-pressed="true">Red</button>
+          <button class="match-size-btn team-choice-btn" type="button" data-local-team="blue" aria-pressed="false">Blue</button>
+        </div>
+      </div>
       <div class="setup-group">
         <span class="setup-label" id="local-format-label">Format</span>
         <div id="local-size-pick" role="group" aria-labelledby="local-format-label">
-          <button class="match-size-btn selected" type="button" data-local-size="1" aria-pressed="true">1x1</button>
-          <button class="match-size-btn" type="button" data-local-size="2" aria-pressed="false">2x2</button>
+          <button class="match-size-btn selected" type="button" data-local-size="1" aria-pressed="true">1v1</button>
+          <button class="match-size-btn" type="button" data-local-size="2" aria-pressed="false">2v2</button>
         </div>
       </div>
       <div class="setup-group">
@@ -126,49 +205,70 @@
       </div>
     </div>
     <div id="local-teams">
-      <section class="local-team red" aria-label="Red team, your side">
+      <section class="local-team red" aria-label="Red team">
         <div class="local-team-name">Red Team</div>
         <div id="local-red-roster" class="local-team-roster"></div>
       </section>
-      <section class="local-team blue" aria-label="Blue team, opponents">
+      <section class="local-team blue" aria-label="Blue team">
         <div class="local-team-name">Blue Team</div>
         <div id="local-blue-roster" class="local-team-roster"></div>
       </section>
     </div>
     <div class="online-actions">
       <button id="start-local-btn" class="start-btn" type="button">Start Match</button>
-      <button id="cancel-local-btn" class="tiny-btn" type="button">Cancel</button>
+      <button id="cancel-local-btn" class="tiny-btn" type="button">Back</button>
     </div>
   </div>
-  <div id="online-panel" class="hidden">
-    <label class="online-field" id="primary-code-field">
-      <span id="primary-code-label">Room Code</span>
+  <div id="online-panel" class="hidden" aria-labelledby="online-panel-title">
+    <div class="online-header">
+      <div class="focused-panel-header">
+        <h2 id="online-panel-title" tabindex="-1">Join Room</h2>
+      </div>
+      <span id="online-status" role="status" aria-live="polite" aria-atomic="true">Idle</span>
+    </div>
+    <div class="online-field" id="primary-code-field">
+      <label id="primary-code-label" for="primary-code">Room code</label>
       <span class="online-code-row">
-        <button id="copy-primary-btn" class="tiny-btn hidden" type="button">Copy Room</button>
-        <input id="primary-code" type="text" maxlength="6" spellcheck="false" autocomplete="off" />
+        <input
+          id="primary-code"
+          type="text"
+          maxlength="6"
+          pattern="[A-HJ-NP-Z2-9]{6}"
+          spellcheck="false"
+          autocomplete="off"
+          autocapitalize="characters"
+          aria-describedby="online-code-help"
+        />
+        <button id="copy-primary-btn" class="tiny-btn hidden" type="button">Copy code</button>
       </span>
-    </label>
-    <div id="online-teams">
-      <section class="local-team red" aria-label="Red team">
-        <div class="local-team-name">Red Team</div>
-        <div id="online-red-roster" class="local-team-roster"></div>
-      </section>
-      <section class="local-team spectator" aria-label="Spectators">
-        <div class="local-team-name">Spectators</div>
-        <div id="online-spectator-roster" class="local-team-roster"></div>
-      </section>
-      <section class="local-team blue" aria-label="Blue team">
-        <div class="local-team-name">Blue Team</div>
-        <div id="online-blue-roster" class="local-team-roster"></div>
-      </section>
+      <span id="online-code-help" class="field-help">Enter all six characters, for example ABC234.</span>
+    </div>
+    <div id="online-lobby" class="hidden">
+      <p class="lobby-help">Choose your team. The host can rebalance players before starting.</p>
+      <div id="online-teams">
+        <section class="local-team red" aria-label="Red team">
+          <div class="local-team-name">Red Team</div>
+          <div id="online-red-roster" class="local-team-roster"></div>
+        </section>
+        <section class="local-team spectator" aria-label="Spectators">
+          <div class="local-team-name">Spectators</div>
+          <div id="online-spectator-roster" class="local-team-roster"></div>
+        </section>
+        <section class="local-team blue" aria-label="Blue team">
+          <div class="local-team-name">Blue Team</div>
+          <div id="online-blue-roster" class="local-team-roster"></div>
+        </section>
+      </div>
     </div>
     <div class="online-actions">
       <button id="start-online-btn" class="start-btn hidden" disabled>Start Match</button>
-      <button id="join-room-btn" class="start-btn hidden">Join Room</button>
-      <button id="cancel-online-btn" class="tiny-btn">Cancel</button>
-      <span id="online-status">Idle</span>
+      <button id="join-room-btn" class="start-btn hidden" disabled>Join Room</button>
+      <button id="cancel-online-btn" class="tiny-btn">Back</button>
     </div>
   </div>
+  <p id="keyboard-required" class="keyboard-required" role="note">
+    <strong>Keyboard required.</strong> Connect a keyboard to play on this device.
+  </p>
   <p class="controls-hint">
     <span class="hint-item"><kbd>WASD</kbd> / <kbd>&#8592;&#8593;&#8595;&#8594;</kbd> move</span>
     <span class="hint-item"><kbd>Space</kbd> shoot</span>
@@ -177,11 +277,15 @@
   <button id="ai-test-btn" class="debug-link" type="button">AI sim tests</button>
 </div>
 
-<div id="loading" class="hidden">
+<div id="loading" class="hidden" role="dialog" aria-modal="true" aria-labelledby="loading-text" aria-busy="true">
   <div class="loading-spinner" aria-hidden="true"></div>
-  <span id="loading-text">Loading stadium...</span>
+  <span id="loading-text" role="status" aria-live="polite" tabindex="-1">Loading stadium...</span>
+  <div id="loading-error-actions" class="online-actions hidden">
+    <button id="loading-retry-btn" class="start-btn" type="button">Retry loading</button>
+    <button id="loading-back-btn" class="tiny-btn" type="button">Back</button>
+  </div>
 </div>
 
-<script type="module" src="src/main.js"></script>
+<script type="module" src="src/main.js?v=ui-focused-14"></script>
 </body>
 </html>

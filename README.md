@@ -56,13 +56,12 @@ Pushes to `main` deploy automatically via GitHub Actions.
 
 The online mode is peer-to-peer with a short lobby code:
 
-- Host Online creates a six-character room code.
-- Up to three other players choose Join Online and enter that room code.
+- Create Room creates a six-character room code.
+- Up to three other players choose Join Room and enter that room code.
 - Each player can enter a nickname and pick a hero before joining.
-- The host sees each player's nickname and hero, chooses red or blue team for
-  every player, then starts the match once both teams have at least one player.
-- Guests can see the current lobby roster and team choices, but only the host can
-  change teams.
+- Players choose a team or spectator role, and the host can rebalance the lobby.
+- The match can start once both red and blue have at least one player.
+- If a guest leaves during a match, their slot is replaced by AI so play can continue.
 
 The host simulates the match authoritatively. Guests send inputs and receive
 state snapshots over WebRTC. PeerJS handles only the lightweight signaling needed
@@ -76,11 +75,14 @@ two to four total players.
 | WASD / Arrows | Move |
 | Space | Shoot |
 | Shift | Hero power (Sam: dash, Tesla: magnet) |
+| Esc | Open the game menu |
 | Top-right sound control | Mute or adjust sound-effect volume |
+
+Gameplay requires a keyboard. Touch-only devices show a keyboard requirement notice before play.
 
 ## Gameplay
 
-- Local 1v1 or 2v2 vs AI, or online peer-to-peer with two to four players
+- Solo 1v1 or 2v2 vs AI, or online peer-to-peer with two to four players
 - First pick a hero (Sam or Tesla)
 - 3 minute matches, first to 3 goals
 - Red defends the left goal, blue defends the right

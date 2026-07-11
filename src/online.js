@@ -1,7 +1,7 @@
 const CHANNEL_NAME = 'soccer-pucks';
 const ROOM_PREFIX = 'soccer-pucks-';
 const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const ROOM_LENGTH = 6;
+export const ROOM_CODE_LENGTH = 6;
 const HOST_CREATE_ATTEMPTS = 5;
 export const MAX_GUESTS = 3;
 
@@ -53,7 +53,9 @@ export async function createGuestSession(roomCode, handlers = {}) {
   await loadPeerJs();
 
   const normalizedRoomCode = normalizeRoomCode(roomCode);
-  if (!normalizedRoomCode) throw new Error('Enter a room code.');
+  if (normalizedRoomCode.length !== ROOM_CODE_LENGTH) {
+    throw new Error(`Enter all ${ROOM_CODE_LENGTH} room-code characters.`);
+  }
 
   const session = new LobbySession('guest', normalizedRoomCode, handlers);
   await session.open();
@@ -65,10 +67,10 @@ export async function createGuestSession(roomCode, handlers = {}) {
 export function normalizeRoomCode(value) {
   return String(value || '')
     .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '')
-    .replace(/O/g, '0')
-    .replace(/I/g, '1')
-    .slice(0, ROOM_LENGTH);
+    .split('')
+    .filter((character) => ROOM_ALPHABET.includes(character))
+    .join('')
+    .slice(0, ROOM_CODE_LENGTH);
 }
 
 class LobbySession {
@@ -119,7 +121,7 @@ class LobbySession {
       const shouldAccept = this.handlers.shouldAcceptConnection?.(this, connection) !== false;
       if (!shouldAccept || this.connections.size >= MAX_GUESTS) {
         connection.on('open', () => {
-          connection.send({ type: 'roomFull' });
+          connection.send({ type: shouldAccept ? 'roomFull' : 'roomUnavailable' });
           setTimeout(() => connection.close(), 0);
         });
         return;
@@ -175,6 +177,15 @@ class LobbySession {
       typeof connectionOrId === 'string' ? this.connections.get(connectionOrId) : connectionOrId;
     if (!connection?.open) return false;
     connection.send(message);
+    return true;
+  }
+
+  disconnect(connectionId, message = null) {
+    const connection = this.connections.get(connectionId);
+    if (!connection) return false;
+    if (message && connection.open) connection.send(message);
+    this.connections.delete(connectionId);
+    setTimeout(() => connection.close(), 0);
     return true;
   }
 
@@ -252,7 +263,7 @@ function loadScript(url) {
 }
 
 function generateRoomCode() {
-  const bytes = new Uint8Array(ROOM_LENGTH);
+  const bytes = new Uint8Array(ROOM_CODE_LENGTH);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (byte) => ROOM_ALPHABET[byte % ROOM_ALPHABET.length]).join('');
 }
