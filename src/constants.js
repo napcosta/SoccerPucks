@@ -7,7 +7,16 @@ export const PITCH = {
   goalDepth: 1.6 * GOAL_SCALE,
   wallHeight: 1.0,
   surfaceY: 0.015,
-  playerBoundsMargin: 3,
+};
+
+// Inner footprint of the stadium bowl (stadium.glb at 0.78 scale), measured at
+// ice level: straight walls at ±innerHalfWidth / ±innerHalfLength joined by
+// rounded corner arcs. The ice floor fills this shape and players collide with
+// it; only the ball is confined to the pitch walls.
+export const STADIUM = {
+  innerHalfWidth: 12.75,
+  innerHalfLength: 15.0,
+  cornerRadius: 3.66,
 };
 
 export const GOAL = {

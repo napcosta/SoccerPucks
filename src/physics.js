@@ -1,4 +1,4 @@
-import { PITCH, PLAYER, BALL, GOAL } from './constants.js';
+import { PITCH, STADIUM, PLAYER, BALL, GOAL } from './constants.js';
 
 export function createBody(x, z, radius, mass = 1) {
   return { x, z, vx: 0, vz: 0, radius, mass };
@@ -92,11 +92,37 @@ export function collideWalls(body, restitution) {
   return hit;
 }
 
-// Players pass through the ring walls (the walls only stop the ball); this
-// outer rectangle keeps them from wandering off the stadium floor.
+// Players pass through the ring walls (the walls only stop the ball); the
+// stadium's inner wall — a rounded rectangle (STADIUM) — is what stops them.
 export function collidePlayerBounds(body, restitution) {
-  const margin = PITCH.playerBoundsMargin;
-  const maxX = PITCH.halfWidth + margin - body.radius;
+  const cornerX = STADIUM.innerHalfWidth - STADIUM.cornerRadius;
+  const cornerZ = STADIUM.innerHalfLength - STADIUM.cornerRadius;
+  const ax = Math.abs(body.x);
+  const az = Math.abs(body.z);
+
+  if (ax > cornerX && az > cornerZ) {
+    // Corner quadrant: hold the body inside the corner arc.
+    const dx = ax - cornerX;
+    const dz = az - cornerZ;
+    const dist = Math.hypot(dx, dz);
+    const maxDist = STADIUM.cornerRadius - body.radius;
+    if (dist > maxDist && dist > 0) {
+      const sx = Math.sign(body.x);
+      const sz = Math.sign(body.z);
+      const nx = (dx / dist) * sx;
+      const nz = (dz / dist) * sz;
+      body.x = (cornerX + (dx / dist) * maxDist) * sx;
+      body.z = (cornerZ + (dz / dist) * maxDist) * sz;
+      const outwardSpeed = body.vx * nx + body.vz * nz;
+      if (outwardSpeed > 0) {
+        body.vx -= (1 + restitution) * outwardSpeed * nx;
+        body.vz -= (1 + restitution) * outwardSpeed * nz;
+      }
+    }
+    return;
+  }
+
+  const maxX = STADIUM.innerHalfWidth - body.radius;
   if (body.x > maxX) {
     body.x = maxX;
     if (body.vx > 0) body.vx = -body.vx * restitution;
@@ -105,7 +131,7 @@ export function collidePlayerBounds(body, restitution) {
     if (body.vx < 0) body.vx = -body.vx * restitution;
   }
 
-  const maxZ = PITCH.halfLength + PITCH.goalDepth + margin - body.radius;
+  const maxZ = STADIUM.innerHalfLength - body.radius;
   if (body.z > maxZ) {
     body.z = maxZ;
     if (body.vz > 0) body.vz = -body.vz * restitution;

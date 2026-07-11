@@ -151,32 +151,382 @@ kbd {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 28px;
+  gap: 22px;
   padding: 32px 16px;
+  overflow-x: hidden;
   overflow-y: auto;
   background:
-    radial-gradient(ellipse 90% 55% at 50% -12%, rgba(74, 126, 224, 0.26), transparent 62%),
-    radial-gradient(ellipse 85% 50% at 50% 114%, rgba(52, 168, 98, 0.14), transparent 64%),
-    radial-gradient(ellipse at center, rgba(20, 24, 40, 0.9), rgba(8, 8, 12, 0.97));
+    radial-gradient(ellipse 44% 42% at 8% 48%, rgba(214, 35, 62, 0.13), transparent 70%),
+    radial-gradient(ellipse 46% 44% at 92% 48%, rgba(35, 128, 239, 0.15), transparent 70%),
+    radial-gradient(ellipse 90% 60% at 50% -12%, rgba(91, 139, 228, 0.24), transparent 62%),
+    radial-gradient(ellipse 85% 46% at 50% 116%, rgba(30, 150, 90, 0.12), transparent 66%),
+    linear-gradient(180deg, #0b1020 0%, #080b14 52%, #060910 100%);
   z-index: 10;
 }
 
-#menu h1 {
-  font-size: 72px;
-  font-weight: 900;
-  letter-spacing: 0;
+#menu::before,
+#menu::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+#menu::before {
+  left: -20%;
+  right: -20%;
+  bottom: -12%;
+  height: 65%;
+  opacity: 0.25;
+  background:
+    linear-gradient(rgba(101, 163, 255, 0.3) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(101, 163, 255, 0.3) 1px, transparent 1px);
+  background-size: 74px 52px;
+  transform: perspective(1800px) rotateX(60deg);
+  transform-origin: 50% 0;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 24%, #000 68%, transparent 96%);
+  mask-image: linear-gradient(to bottom, transparent, #000 24%, #000 68%, transparent 96%);
+  animation: arena-grid-drift 9s linear infinite;
+}
+
+#menu::after {
+  inset: 0;
+  opacity: 0.7;
+  background:
+    radial-gradient(circle at 50% 37%, rgba(255, 255, 255, 0.055) 0 1px, transparent 2px),
+    radial-gradient(circle at 26% 31%, rgba(255, 69, 91, 0.45) 0 1px, transparent 2px),
+    radial-gradient(circle at 74% 28%, rgba(74, 166, 255, 0.48) 0 1px, transparent 2px);
+  background-size: 72px 72px, 118px 118px, 137px 137px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at center, #000, transparent 76%);
+  mask-image: radial-gradient(ellipse 80% 70% at center, #000, transparent 76%);
+  animation: arena-lights-breathe 5.5s ease-in-out infinite alternate;
+}
+
+#menu > * {
+  position: relative;
+  z-index: 1;
+}
+
+.brand-lockup {
+  width: min(780px, calc(100vw - 44px));
+  flex: 0 0 auto;
+  line-height: 0;
+  isolation: isolate;
+  filter: drop-shadow(0 24px 42px rgba(0, 0, 0, 0.38));
+  transition: width 0.32s ease, filter 0.32s ease;
+  animation: logo-lockup-arrive 0.8s cubic-bezier(0.18, 0.9, 0.25, 1.15) both;
+}
+
+.brand-logo {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.logo-word {
+  font-family: "Arial Black", "Segoe UI Black", Impact, sans-serif;
+  font-weight: 950;
   font-style: italic;
-  background: linear-gradient(180deg, #fff 30%, #6ea8ff);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  text-shadow: 0 12px 40px rgba(80, 140, 255, 0.35);
+  paint-order: stroke fill;
+  text-rendering: geometricPrecision;
+}
+
+.logo-soccer {
+  font-size: 126px;
+  letter-spacing: -7px;
+}
+
+.logo-pucks {
+  font-size: 132px;
+  letter-spacing: -2px;
+}
+
+.logo-red-extrusion {
+  fill: url(#logo-red-edge);
+  stroke: #510817;
+  stroke-width: 8px;
+}
+
+.logo-red-face {
+  fill: url(#logo-red-face);
+  stroke: #ffadb4;
+  stroke-width: 3px;
+}
+
+.logo-blue-extrusion {
+  fill: url(#logo-blue-edge);
+  stroke: #061a4d;
+  stroke-width: 8px;
+}
+
+.logo-blue-face {
+  fill: url(#logo-blue-face);
+  stroke: #b8edff;
+  stroke-width: 3px;
+}
+
+.logo-soccer-layer,
+.logo-pucks-layer,
+.logo-puck-entry,
+.logo-puck-float,
+.logo-energy-field,
+.logo-strike,
+.logo-tagline {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.logo-soccer-layer {
+  animation: logo-soccer-enter 0.72s 0.08s cubic-bezier(0.16, 0.86, 0.3, 1.08) both;
+}
+
+.logo-pucks-layer {
+  animation: logo-pucks-enter 0.78s 0.18s cubic-bezier(0.16, 0.86, 0.3, 1.08) both;
+}
+
+.logo-puck-entry {
+  transform-origin: 192px 94px;
+  animation: logo-puck-enter 1.06s 0.16s cubic-bezier(0.17, 0.86, 0.28, 1.12) both;
+}
+
+.logo-puck-float {
+  transform-origin: 192px 94px;
+  animation: logo-puck-float 3.8s 1.3s ease-in-out infinite;
+}
+
+.logo-puck-aura {
+  fill: rgba(255, 255, 255, 0.035);
+  stroke: url(#logo-rim);
+  stroke-width: 2px;
+  stroke-dasharray: 8 12;
+  opacity: 0.68;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: logo-aura-spin 9s linear infinite;
+}
+
+.logo-puck-highlight {
+  fill: rgba(255, 255, 255, 0.64);
+  filter: blur(1px);
+  animation: logo-highlight-pulse 2.8s ease-in-out infinite;
+}
+
+.logo-puck-rim-light {
+  fill: none;
+  stroke: #54c7ff;
+  stroke-width: 3px;
+  stroke-linecap: round;
+  opacity: 0.55;
+}
+
+.logo-puck-panel {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: logo-panel-turn 11s linear infinite;
+}
+
+.logo-speed-line,
+.logo-energy-arc,
+.logo-strike path {
+  fill: none;
+  stroke-linecap: round;
+}
+
+.logo-speed-line {
+  stroke-width: 5px;
+  stroke-dasharray: 18 20;
+  opacity: 0.7;
+  animation: logo-dash 1.35s linear infinite;
+}
+
+.logo-speed-line-red {
+  stroke: #ff3651;
+}
+
+.logo-speed-line-blue {
+  stroke: #3da9ff;
+  animation-direction: reverse;
+}
+
+.logo-energy-arc {
+  stroke: url(#logo-energy);
+  stroke-width: 2px;
+  stroke-dasharray: 5 14;
+  opacity: 0.4;
+  animation: logo-dash 2.4s linear infinite;
+}
+
+.logo-energy-field {
+  animation: logo-energy-enter 1.05s 0.46s ease-out both;
+}
+
+.logo-spark {
+  fill: #fff;
+  filter: url(#logo-energy-glow);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: logo-spark 2.1s ease-in-out infinite;
+}
+
+.logo-spark-two {
+  animation-delay: -0.65s;
+}
+
+.logo-spark-three {
+  animation-delay: -1.25s;
+}
+
+.logo-strike {
+  animation: logo-strike-enter 0.75s 0.7s ease-out both;
+}
+
+.logo-strike path:first-child {
+  stroke: url(#logo-energy);
+  stroke-width: 7px;
+  opacity: 0.8;
+}
+
+.logo-strike path:last-child {
+  stroke: #eaf8ff;
+  stroke-width: 1.5px;
+  stroke-dasharray: 3 12;
+  opacity: 0.7;
+  animation: logo-dash 1.1s linear infinite;
+}
+
+.logo-shine {
+  fill: rgba(255, 255, 255, 0.52);
+  transform: skewX(-18deg);
+  animation: logo-shine-sweep 6.8s 1.35s ease-in-out infinite;
+}
+
+.logo-shine-blue {
+  animation-delay: 1.48s;
+}
+
+.logo-tagline {
+  fill: #aac2e7;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 7px;
+  animation: logo-tagline-enter 0.65s 0.92s ease-out both;
+}
+
+#menu[data-view]:not([data-view="home"]) .brand-lockup {
+  width: min(430px, calc(100vw - 44px));
+  filter: drop-shadow(0 16px 30px rgba(0, 0, 0, 0.3));
+}
+
+#menu[data-view]:not([data-view="home"]) .logo-energy-field,
+#menu[data-view]:not([data-view="home"]) .logo-strike,
+#menu[data-view]:not([data-view="home"]) .logo-tagline {
+  opacity: 0.18;
+}
+
+@keyframes arena-grid-drift {
+  to { background-position: 0 52px, 74px 0; }
+}
+
+@keyframes arena-lights-breathe {
+  from { opacity: 0.46; transform: scale(0.98); }
+  to { opacity: 0.78; transform: scale(1.02); }
+}
+
+@keyframes logo-lockup-arrive {
+  from { opacity: 0; transform: translateY(-18px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes logo-soccer-enter {
+  from { opacity: 0; transform: translateX(-80px) skewX(-9deg); }
+  to { opacity: 1; transform: translateX(0) skewX(0); }
+}
+
+@keyframes logo-pucks-enter {
+  from { opacity: 0; transform: translateX(86px) skewX(8deg); }
+  to { opacity: 1; transform: translateX(0) skewX(0); }
+}
+
+@keyframes logo-puck-enter {
+  0% { opacity: 0; transform: translate(-260px, -100px) rotate(-260deg) scale(0.38); }
+  68% { opacity: 1; transform: translate(8px, 4px) rotate(14deg) scale(1.07); }
+  84% { transform: translate(-3px, -3px) rotate(-5deg) scale(0.98); }
+  100% { opacity: 1; transform: translate(0, 0) rotate(0) scale(1); }
+}
+
+@keyframes logo-puck-float {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-5px) rotate(2deg); }
+}
+
+@keyframes logo-aura-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes logo-panel-turn {
+  0%, 42%, 100% { transform: rotate(0); }
+  52%, 90% { transform: rotate(360deg); }
+}
+
+@keyframes logo-highlight-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.9; }
+}
+
+@keyframes logo-energy-enter {
+  from { opacity: 0; transform: scaleX(0.55); }
+  to { opacity: 1; transform: scaleX(1); }
+}
+
+@keyframes logo-dash {
+  to { stroke-dashoffset: -76px; }
+}
+
+@keyframes logo-spark {
+  0%, 100% { opacity: 0.15; transform: scale(0.5); }
+  50% { opacity: 1; transform: scale(1.45); }
+}
+
+@keyframes logo-strike-enter {
+  from { opacity: 0; transform: scaleX(0); }
+  to { opacity: 1; transform: scaleX(1); }
+}
+
+@keyframes logo-shine-sweep {
+  0%, 10% { transform: translateX(0) skewX(-18deg); opacity: 0; }
+  14% { opacity: 0.72; }
+  27%, 100% { transform: translateX(1180px) skewX(-18deg); opacity: 0; }
+}
+
+@keyframes logo-tagline-enter {
+  from { opacity: 0; transform: translateY(7px); letter-spacing: 12px; }
+  to { opacity: 0.82; transform: translateY(0); letter-spacing: 7px; }
 }
 
 #menu .subtitle {
-  font-size: 18px;
-  color: #aab4cc;
-  margin-top: -18px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-top: -12px;
+  color: #b5c4db;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 2.6px;
+  text-transform: uppercase;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+}
+
+#menu .subtitle::before,
+#menu .subtitle::after {
+  content: "";
+  width: 38px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(117, 177, 255, 0.68));
+}
+
+#menu .subtitle::after {
+  transform: scaleX(-1);
 }
 
 #nickname-field {
@@ -337,6 +687,7 @@ kbd {
 
 .mode-btn {
   position: relative;
+  overflow: hidden;
   font-size: 20px;
   font-weight: 700;
   padding: 13px 40px;
@@ -347,6 +698,43 @@ kbd {
   cursor: pointer;
   letter-spacing: 0;
   transition: transform 0.12s, box-shadow 0.12s;
+}
+
+#home-actions .mode-btn {
+  min-width: 186px;
+  border-color: rgba(151, 193, 255, 0.4);
+  background:
+    linear-gradient(180deg, rgba(35, 43, 65, 0.96), rgba(12, 17, 31, 0.98));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.06), 0 12px 28px rgba(0, 0, 0, 0.28);
+}
+
+#home-actions .mode-btn::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  opacity: 0.85;
+  transform: scaleX(0.62);
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+
+#start-btn::before {
+  background: linear-gradient(90deg, transparent, #ff3a54, transparent);
+  box-shadow: 0 0 16px rgba(255, 58, 84, 0.9);
+}
+
+#online-btn::before {
+  background: linear-gradient(90deg, transparent, #3ba9ff, transparent);
+  box-shadow: 0 0 16px rgba(59, 169, 255, 0.9);
+}
+
+#home-actions .mode-btn:hover::before,
+#home-actions .mode-btn:focus-visible::before {
+  opacity: 1;
+  transform: scaleX(1);
 }
 
 html[data-startup-pending] #home-actions {
@@ -375,6 +763,18 @@ html[data-startup-pending] #home-actions {
 .mode-btn:hover {
   transform: scale(1.04);
   box-shadow: 0 8px 32px rgba(74, 126, 224, 0.45);
+}
+
+#start-btn:hover,
+#start-btn:focus-visible {
+  border-color: rgba(255, 79, 101, 0.64);
+  box-shadow: 0 10px 34px rgba(191, 28, 57, 0.26), inset 0 1px rgba(255, 255, 255, 0.08);
+}
+
+#online-btn:hover,
+#online-btn:focus-visible {
+  border-color: rgba(64, 168, 255, 0.68);
+  box-shadow: 0 10px 34px rgba(34, 112, 222, 0.3), inset 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .mode-btn:active {
@@ -1360,13 +1760,14 @@ html[data-startup-pending] #home-actions {
     padding: 28px 16px;
   }
 
-  #menu h1 {
-    font-size: 52px;
+  .brand-lockup {
+    width: min(650px, calc(100vw - 40px));
   }
 
   #menu .subtitle {
-    margin-top: -8px;
-    font-size: 15px;
+    margin-top: -6px;
+    font-size: 12px;
+    letter-spacing: 1.8px;
     text-align: center;
   }
 
@@ -1417,9 +1818,22 @@ html[data-startup-pending] #home-actions {
 
 /* Single-column stacking only on genuinely narrow screens. */
 @media (max-width: 700px) {
-  #menu h1 {
-    font-size: clamp(34px, 11vw, 44px);
-    white-space: nowrap;
+  .brand-lockup {
+    width: min(560px, calc(100vw - 24px));
+  }
+
+  #menu[data-view]:not([data-view="home"]) .brand-lockup {
+    width: min(350px, calc(100vw - 24px));
+  }
+
+  .logo-tagline {
+    font-size: 13px;
+    letter-spacing: 5px;
+  }
+
+  #menu .subtitle::before,
+  #menu .subtitle::after {
+    width: 22px;
   }
 
   #local-setup {

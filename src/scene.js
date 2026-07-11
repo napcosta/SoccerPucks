@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Reflector } from 'three/addons/objects/Reflector.js';
-import { PITCH, GOAL, NO_REFLECT_LAYER } from './constants.js';
+import { PITCH, STADIUM, GOAL, NO_REFLECT_LAYER } from './constants.js';
 import { footLift } from './assets.js';
 import { createScoreboard } from './scoreboard.js';
 import { toonGradientMap, disableOutline } from './toon.js';
@@ -59,15 +59,12 @@ export function buildWorld(assets, outlineEffect = null) {
   ground.receiveShadow = true;
   scene.add(ground);
 
-  const iceMirror = new Reflector(
-    new THREE.PlaneGeometry(PITCH.halfWidth * 2, (PITCH.halfLength + PITCH.goalDepth) * 2),
-    {
-      clipBias: 0.003,
-      textureWidth: 2048,
-      textureHeight: 2048,
-      color: 0x7d8fa6,
-    }
-  );
+  const iceMirror = new Reflector(stadiumFloorGeometry(), {
+    clipBias: 0.003,
+    textureWidth: 2048,
+    textureHeight: 2048,
+    color: 0x7d8fa6,
+  });
   disableOutline(iceMirror.material);
   iceMirror.rotation.x = -Math.PI / 2;
   iceMirror.position.y = -0.02;
@@ -75,7 +72,9 @@ export function buildWorld(assets, outlineEffect = null) {
   scene.add(iceMirror);
 
   const pitchTex = assets.pitchTexture;
-  pitchTex.repeat.set(2, 3);
+  // ShapeGeometry UVs are in world units; this keeps the tile size the old
+  // court-sized plane had (2×3 tiles across the court).
+  pitchTex.repeat.set(1 / PITCH.halfWidth, 1.5 / (PITCH.halfLength + PITCH.goalDepth));
   // Translucent so the mirror underneath shows through as an ice reflection.
   const pitchMat = disableOutline(
     new THREE.MeshToonMaterial({
@@ -85,10 +84,7 @@ export function buildWorld(assets, outlineEffect = null) {
       opacity: 0.55,
     })
   );
-  const pitch = new THREE.Mesh(
-    new THREE.PlaneGeometry(PITCH.halfWidth * 2, (PITCH.halfLength + PITCH.goalDepth) * 2),
-    pitchMat
-  );
+  const pitch = new THREE.Mesh(stadiumFloorGeometry(), pitchMat);
   pitch.rotation.x = -Math.PI / 2;
   pitch.receiveShadow = true;
   scene.add(pitch);
@@ -131,6 +127,26 @@ function celShadeMirror(mirror, outlineEffect) {
       renderer.render = plainRender;
     }
   };
+}
+
+// Rounded rectangle matching the stadium's inner wall, with a small bleed so
+// the ice edge tucks under the wall base instead of leaving a hairline gap.
+function stadiumFloorGeometry() {
+  const bleed = 0.15;
+  const w = STADIUM.innerHalfWidth + bleed;
+  const l = STADIUM.innerHalfLength + bleed;
+  const r = STADIUM.cornerRadius;
+  const shape = new THREE.Shape();
+  shape.moveTo(-w + r, -l);
+  shape.lineTo(w - r, -l);
+  shape.absarc(w - r, -l + r, r, -Math.PI / 2, 0, false);
+  shape.lineTo(w, l - r);
+  shape.absarc(w - r, l - r, r, 0, Math.PI / 2, false);
+  shape.lineTo(-w + r, l);
+  shape.absarc(-w + r, l - r, r, Math.PI / 2, Math.PI, false);
+  shape.lineTo(-w, -l + r);
+  shape.absarc(-w + r, -l + r, r, Math.PI, Math.PI * 1.5, false);
+  return new THREE.ShapeGeometry(shape, 16);
 }
 
 function addSkybox(scene) {
