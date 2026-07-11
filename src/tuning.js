@@ -18,8 +18,8 @@ function defaults() {
       wallRestitution: BALL.wallRestitution,
     },
     scoreboard: {
-      x: -12.6,
-      y: 1.05,
+      x: -18.6,
+      y: 2.65,
       z: 0,
     },
   };

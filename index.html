@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Soccer Pucks</title>
-<link rel="stylesheet" href="css/style.css?v=brand-kickoff-1" />
+<link rel="stylesheet" href="css/style.css?v=brand-kickoff-8" />
 <script type="importmap">
 {
   "imports": {
@@ -164,23 +164,6 @@
           <stop offset="0" stop-color="#123b97" />
           <stop offset="1" stop-color="#071842" />
         </linearGradient>
-        <radialGradient id="logo-puck-top" cx="36%" cy="25%" r="74%">
-          <stop offset="0" stop-color="#f5fbff" />
-          <stop offset="0.2" stop-color="#a8bbcb" />
-          <stop offset="0.58" stop-color="#3c4c60" />
-          <stop offset="1" stop-color="#111925" />
-        </radialGradient>
-        <linearGradient id="logo-puck-side" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#243448" />
-          <stop offset="0.42" stop-color="#101827" />
-          <stop offset="1" stop-color="#050911" />
-        </linearGradient>
-        <linearGradient id="logo-rim" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0" stop-color="#ff304d" />
-          <stop offset="0.44" stop-color="#f3f7ff" />
-          <stop offset="0.56" stop-color="#f3f7ff" />
-          <stop offset="1" stop-color="#2499ff" />
-        </linearGradient>
         <linearGradient id="logo-energy" x1="0" y1="0" x2="1" y2="0">
           <stop offset="0" stop-color="#ff2f4d" stop-opacity="0" />
           <stop offset="0.28" stop-color="#ff2f4d" />
@@ -190,11 +173,6 @@
         </linearGradient>
         <filter id="logo-word-shadow" x="-20%" y="-30%" width="140%" height="180%">
           <feDropShadow dx="0" dy="12" stdDeviation="8" flood-color="#02040b" flood-opacity="0.78" />
-        </filter>
-        <filter id="logo-puck-glow" x="-80%" y="-80%" width="260%" height="260%">
-          <feDropShadow dx="0" dy="12" stdDeviation="9" flood-color="#02040b" flood-opacity="0.9" />
-          <feDropShadow dx="-5" dy="0" stdDeviation="9" flood-color="#ff2747" flood-opacity="0.55" />
-          <feDropShadow dx="5" dy="0" stdDeviation="9" flood-color="#2e9fff" flood-opacity="0.58" />
         </filter>
         <filter id="logo-energy-glow" x="-20%" y="-200%" width="140%" height="500%">
           <feGaussianBlur stdDeviation="5" result="blur" />
@@ -221,35 +199,21 @@
         <circle class="logo-spark logo-spark-three" cx="704" cy="274" r="3" />
       </g>
 
-      <g class="logo-soccer-layer" filter="url(#logo-word-shadow)">
-        <text x="57" y="151" class="logo-word logo-soccer logo-red-extrusion">S</text>
-        <text x="262" y="151" class="logo-word logo-soccer logo-red-extrusion">CCER</text>
-        <text x="53" y="142" class="logo-word logo-soccer logo-red-face">S</text>
-        <text x="258" y="142" class="logo-word logo-soccer logo-red-face">CCER</text>
-        <rect class="logo-shine logo-shine-red" x="-180" y="35" width="120" height="130" clip-path="url(#logo-soccer-clip)" />
+      <g class="logo-soccer-align" transform="translate(116 0)">
+        <g class="logo-soccer-layer" filter="url(#logo-word-shadow)">
+          <text x="57" y="151" class="logo-word logo-soccer logo-red-extrusion">S</text>
+          <text x="262" y="151" class="logo-word logo-soccer logo-red-extrusion">CCER</text>
+          <text x="53" y="142" class="logo-word logo-soccer logo-red-face">S</text>
+          <text x="258" y="142" class="logo-word logo-soccer logo-red-face">CCER</text>
+          <rect class="logo-shine logo-shine-red" x="-180" y="35" width="120" height="130" clip-path="url(#logo-soccer-clip)" />
+        </g>
       </g>
 
-      <g class="logo-pucks-layer" filter="url(#logo-word-shadow)">
-        <text x="178" y="274" class="logo-word logo-pucks logo-blue-extrusion">PUCKS</text>
-        <text x="173" y="264" class="logo-word logo-pucks logo-blue-face">PUCKS</text>
-        <rect class="logo-shine logo-shine-blue" x="-220" y="158" width="135" height="126" clip-path="url(#logo-pucks-clip)" />
-      </g>
-
-      <g class="logo-puck-entry">
-        <g class="logo-puck-float" filter="url(#logo-puck-glow)">
-          <ellipse class="logo-puck-aura" cx="192" cy="112" rx="74" ry="57" />
-          <path d="M130 91 C130 68 158 51 192 51 C226 51 254 68 254 91 L254 117 C254 140 226 157 192 157 C158 157 130 140 130 117 Z" fill="url(#logo-puck-side)" stroke="#07111f" stroke-width="6" />
-          <path d="M131 104 C143 125 166 135 192 135 C220 135 243 124 253 104 L253 119 C251 142 224 158 192 158 C158 158 132 141 131 118 Z" fill="#060a12" opacity="0.76" />
-          <ellipse cx="192" cy="90" rx="62" ry="43" fill="url(#logo-puck-top)" stroke="url(#logo-rim)" stroke-width="6" />
-          <ellipse cx="192" cy="90" rx="51" ry="34" fill="none" stroke="#d8edff" stroke-opacity="0.18" stroke-width="2" />
-          <g class="logo-puck-panel" fill="#0b1422" stroke="#d9edff" stroke-opacity="0.17" stroke-width="2">
-            <path d="M192 70 L209 80 L203 99 L181 99 L175 80 Z" />
-            <path d="M175 80 L151 70 L142 87 L158 102 L181 99" fill="none" />
-            <path d="M209 80 L232 70 L243 88 L225 103 L203 99" fill="none" />
-            <path d="M158 102 L165 121 M225 103 L218 121 M192 70 L192 55" fill="none" />
-          </g>
-          <ellipse class="logo-puck-highlight" cx="171" cy="69" rx="17" ry="9" transform="rotate(-16 171 69)" />
-          <path class="logo-puck-rim-light" d="M139 112 C154 132 179 138 203 133" />
+      <g class="logo-pucks-align" transform="translate(29 0)">
+        <g class="logo-pucks-layer" filter="url(#logo-word-shadow)">
+          <text x="178" y="274" class="logo-word logo-pucks logo-blue-extrusion">PUCKS</text>
+          <text x="173" y="264" class="logo-word logo-pucks logo-blue-face">PUCKS</text>
+          <rect class="logo-shine logo-shine-blue" x="-220" y="158" width="135" height="126" clip-path="url(#logo-pucks-clip)" />
         </g>
       </g>
 
@@ -259,6 +223,9 @@
       </g>
       <text x="460" y="294" text-anchor="middle" class="logo-tagline">KICK  &middot;  CLASH  &middot;  CONQUER</text>
     </svg>
+    <span class="brand-ball-stage" aria-hidden="true">
+      <canvas id="brand-ball-canvas" class="brand-ball-canvas" width="384" height="320"></canvas>
+    </span>
   </h1>
   <p class="subtitle" id="menu-subtitle">Fast 1v1 and 2v2 arcade soccer</p>
   <div id="home-actions" class="menu-screen">
@@ -403,6 +370,7 @@
   </div>
 </div>
 
+<script type="module" src="src/brand-ball.js?v=game-ball-11"></script>
 <script type="module" src="src/main.js?v=ui-focused-14"></script>
 </body>
 </html>

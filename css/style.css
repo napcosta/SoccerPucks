@@ -209,6 +209,7 @@ kbd {
 .brand-lockup {
   width: min(780px, calc(100vw - 44px));
   flex: 0 0 auto;
+  overflow: visible;
   line-height: 0;
   isolation: isolate;
   filter: drop-shadow(0 24px 42px rgba(0, 0, 0, 0.38));
@@ -267,8 +268,6 @@ kbd {
 
 .logo-soccer-layer,
 .logo-pucks-layer,
-.logo-puck-entry,
-.logo-puck-float,
 .logo-energy-field,
 .logo-strike,
 .logo-tagline {
@@ -284,45 +283,35 @@ kbd {
   animation: logo-pucks-enter 0.78s 0.18s cubic-bezier(0.16, 0.86, 0.3, 1.08) both;
 }
 
-.logo-puck-entry {
-  transform-origin: 192px 94px;
-  animation: logo-puck-enter 1.06s 0.16s cubic-bezier(0.17, 0.86, 0.28, 1.12) both;
+.brand-ball-stage {
+  position: absolute;
+  top: 0;
+  left: 24.7%;
+  z-index: 3;
+  display: block;
+  width: 22%;
+  height: 58%;
+  overflow: visible;
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: 50% 52%;
 }
 
-.logo-puck-float {
-  transform-origin: 192px 94px;
-  animation: logo-puck-float 3.8s 1.3s ease-in-out infinite;
+.brand-ball-stage.is-ready {
+  animation: logo-puck-enter 1.06s cubic-bezier(0.17, 0.86, 0.28, 1.12) both;
 }
 
-.logo-puck-aura {
-  fill: rgba(255, 255, 255, 0.035);
-  stroke: url(#logo-rim);
-  stroke-width: 2px;
-  stroke-dasharray: 8 12;
-  opacity: 0.68;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: logo-aura-spin 9s linear infinite;
-}
-
-.logo-puck-highlight {
-  fill: rgba(255, 255, 255, 0.64);
-  filter: blur(1px);
-  animation: logo-highlight-pulse 2.8s ease-in-out infinite;
-}
-
-.logo-puck-rim-light {
-  fill: none;
-  stroke: #54c7ff;
-  stroke-width: 3px;
-  stroke-linecap: round;
-  opacity: 0.55;
-}
-
-.logo-puck-panel {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: logo-panel-turn 11s linear infinite;
+.brand-ball-canvas {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  filter:
+    drop-shadow(-4px 0 7px rgba(255, 39, 71, 0.58))
+    drop-shadow(4px 0 7px rgba(46, 159, 255, 0.62))
+    drop-shadow(0 10px 8px rgba(0, 0, 0, 0.75));
+  animation: logo-puck-float 8.5s 1.15s ease-in-out infinite;
 }
 
 .logo-speed-line,
@@ -456,22 +445,9 @@ kbd {
 }
 
 @keyframes logo-puck-float {
-  0%, 100% { transform: translateY(0) rotate(-1deg); }
-  50% { transform: translateY(-5px) rotate(2deg); }
-}
-
-@keyframes logo-aura-spin {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes logo-panel-turn {
-  0%, 42%, 100% { transform: rotate(0); }
-  52%, 90% { transform: rotate(360deg); }
-}
-
-@keyframes logo-highlight-pulse {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 0.9; }
+  0%, 100% { transform: translateY(0) rotate(-0.6deg); }
+  34% { transform: translateY(-2px) rotate(0.5deg); }
+  72% { transform: translateY(-3px) rotate(-0.25deg); }
 }
 
 @keyframes logo-energy-enter {
