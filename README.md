@@ -97,11 +97,20 @@ Models are exported from the Unity project's `.blend` files with
 & "<blender.exe>" -b "<source.blend>" --python "tools\export_glb.py" -- "<output.glb>" apply
 ```
 
+The Shaggy Slider is generated in Meshy AI instead (static fused mesh). Its
+expression shape keys and the Idle / Celebrate / Sad / Angry clips are baked by
+`tools/animate_shaggy_slider.py`, which classifies the mouth and eyes by
+sampling the baked texture through the UVs:
+
+```powershell
+& "<blender.exe>" -b "<meshy_source.blend>" --python "tools\animate_shaggy_slider.py" -- "assets\shaggy_slider.glb" ["<preview_dir>"]
+```
+
 | GLB | Source |
 | --- | --- |
 | `assets/stadium.glb` | `Assets/Models/stadium_full.blend` |
 | `assets/ball.glb` | `Assets/Resources/Heroes/Ball/BallCleanup.blend` |
 | `assets/sam.glb` | `Assets/Resources/Heroes/Sam/Sam.blend` |
 | `assets/tesla.glb` | `Assets/Resources/Heroes/Tesla/TeslaBlend.blend` |
-| `assets/shaggy_slider.glb` | `tools/create_shaggy_slider.py` procedural concept-art model |
+| `assets/shaggy_slider.glb` | Meshy AI `.blend` animated by `tools/animate_shaggy_slider.py` |
 | `assets/goal.glb` | `Assets/Models/goal.blend` |

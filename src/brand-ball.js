@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
-import { toonifyObject } from './toon.js';
 
 const canvas = document.getElementById('brand-ball-canvas');
 const stage = canvas?.closest('.brand-ball-stage');
@@ -24,6 +23,8 @@ async function renderGameBall(target, targetStage) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(384, 320, false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.03;
 
   const outlineEffect = new OutlineEffect(renderer, {
     defaultThickness: 0.0032,
@@ -36,18 +37,18 @@ async function renderGameBall(target, targetStage) {
   camera.position.set(0, 2.7, 5.7);
   camera.lookAt(0, -0.05, 0);
 
-  scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x32281e, 1.25));
+  scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x32281e, 0.85));
 
-  const sun = new THREE.DirectionalLight(0xfff2dd, 2.35);
+  const sun = new THREE.DirectionalLight(0xfff2dd, 2.2);
   sun.position.set(4, 7, 6);
   scene.add(sun);
 
-  const fill = new THREE.DirectionalLight(0x8aa8ff, 0.72);
+  const fill = new THREE.DirectionalLight(0x8aa8ff, 0.55);
   fill.position.set(-5, 4, -3);
   scene.add(fill);
 
   const gltf = await new GLTFLoader().loadAsync('assets/ball.glb');
-  const ball = toonifyObject(gltf.scene);
+  const ball = gltf.scene;
   const ballPose = new THREE.Group();
   ballPose.rotation.x = THREE.MathUtils.degToRad(24);
   ballPose.rotation.y = THREE.MathUtils.degToRad(-11);
