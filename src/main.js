@@ -76,6 +76,7 @@ const localRedRoster = document.getElementById('local-red-roster');
 const localBlueRoster = document.getElementById('local-blue-roster');
 const onlinePanel = document.getElementById('online-panel');
 const onlinePanelTitle = document.getElementById('online-panel-title');
+const onlinePanelDescription = document.getElementById('online-panel-description');
 const onlineLobby = document.getElementById('online-lobby');
 const onlineStatus = document.getElementById('online-status');
 const primaryCode = document.getElementById('primary-code');
@@ -90,6 +91,7 @@ const onlineSpectatorRoster = document.getElementById('online-spectator-roster')
 const onlineBlueRoster = document.getElementById('online-blue-roster');
 const aiTestBtn = document.getElementById('ai-test-btn');
 const aiTestPanel = document.getElementById('ai-test-panel');
+const aiTestTitle = document.getElementById('ai-test-title');
 const aiTestStatus = document.getElementById('ai-test-status');
 const aiTestOutput = document.getElementById('ai-test-output');
 const aiTestScenarios = document.getElementById('ai-test-scenarios');
@@ -160,6 +162,7 @@ let currentMenuScreen = 'home';
 function showMenuScreen(screen, { focus = true } = {}) {
   currentMenuScreen = screen;
   menu.dataset.view = screen;
+  menu.scrollTop = 0;
 
   homeActions.classList.toggle('hidden', screen !== 'home');
   localPanel.classList.toggle('hidden', screen !== 'solo');
@@ -183,7 +186,7 @@ function showMenuScreen(screen, { focus = true } = {}) {
     solo: localPanelTitle,
     'online-choice': onlineChoiceTitle,
     'online-room': onlinePanelTitle,
-    'ai-tests': runAiTestsBtn,
+    'ai-tests': aiTestTitle,
   }[screen];
   queueMicrotask(() => focusTarget?.focus?.());
 }
@@ -330,7 +333,7 @@ cancelOnlineBtn.addEventListener('click', () => {
   showMenuScreen('online-choice');
 });
 hostPanelClose.addEventListener('click', () => closeHostPanel());
-matchHint.addEventListener('click', () => openHostPanel({ advanced: true }));
+matchHint.addEventListener('click', () => openHostPanel());
 hostRestartBtn.addEventListener('click', restartCurrentMatch);
 hostAdvancedToggle.addEventListener('click', toggleHostAdvanced);
 hostLeaveBtn.addEventListener('click', leaveCurrentGame);
@@ -418,7 +421,6 @@ async function showAiTestPanel() {
   closeOnlineSession();
   resetOnlinePanel();
   showMenuScreen('ai-tests');
-  aiTestPanel.scrollIntoView({ block: 'nearest' });
 
   if (!aiTestScenarios.childElementCount) {
     try {
@@ -910,6 +912,7 @@ function handleHostPanelShortcut(event) {
     return;
   }
   if (event.code !== 'Escape') return;
+  if (!loading.classList.contains('hidden')) return;
   if (event.repeat && (isHostPanelOpen() || canOpenHostPanel())) {
     event.preventDefault();
     event.stopPropagation();
@@ -923,10 +926,35 @@ function handleHostPanelShortcut(event) {
     return;
   }
 
-  if (!canOpenHostPanel()) return;
+  if (!canOpenHostPanel()) {
+    if (!menu.classList.contains('hidden') && currentMenuScreen !== 'home') {
+      event.preventDefault();
+      event.stopPropagation();
+      navigateBackFromCurrentMenu();
+    }
+    return;
+  }
   event.preventDefault();
   event.stopPropagation();
-  openHostPanel({ advanced: true });
+  openHostPanel();
+}
+
+function navigateBackFromCurrentMenu() {
+  if (currentMenuScreen === 'online-room') {
+    closeOnlineSession();
+    resetOnlinePanel();
+    showMenuScreen('online-choice');
+    return;
+  }
+  if (currentMenuScreen === 'online-choice') {
+    showHomeScreen();
+    return;
+  }
+  if (currentMenuScreen === 'solo') {
+    closeLocalPanel();
+    return;
+  }
+  if (currentMenuScreen === 'ai-tests') closeAiTestPanel();
 }
 
 function canOpenHostPanel() {
@@ -947,7 +975,7 @@ function openHostPanel({ finished = false, resultText = '', advanced = false } =
   hostRestartBtn.classList.toggle('hidden', !editable);
   hostAdvancedToggle.classList.toggle('hidden', !editable);
   hostRestartBtn.textContent = hostPanelFinished ? 'Rematch' : 'Restart Match';
-  hostAdvancedToggle.textContent = hostPanelFinished ? 'Change setup' : 'Advanced match setup';
+  hostAdvancedToggle.textContent = hostPanelFinished ? 'Change setup' : 'Match setup';
   hostLeaveBtn.textContent = hostPanelFinished ? 'Main menu' : 'Leave Game';
   hostPanelAdvanced.classList.toggle('hidden', !showAdvanced);
   hostAdvancedToggle.setAttribute('aria-expanded', String(showAdvanced));
@@ -992,7 +1020,11 @@ function toggleHostAdvanced() {
   const expanded = hostAdvancedToggle.getAttribute('aria-expanded') === 'true';
   hostAdvancedToggle.setAttribute('aria-expanded', String(!expanded));
   hostPanelAdvanced.classList.toggle('hidden', expanded);
-  if (!expanded) queueMicrotask(() => hostTimeLimit.focus());
+  hostAdvancedToggle.textContent = !expanded
+    ? 'Hide match setup'
+    : hostPanelFinished
+      ? 'Change setup'
+      : 'Match setup';
 }
 
 function trapHostPanelFocus(event) {
@@ -1112,7 +1144,7 @@ function createTeamSelectControl(player, id, onChange) {
   for (const [value, text] of [
     [TEAM.RED, 'Red'],
     [TEAM.BLUE, 'Blue'],
-    [TEAM.SPECTATOR, 'Spectate'],
+    [TEAM.SPECTATOR, 'Spectator'],
   ]) {
     const option = document.createElement('option');
     option.value = String(value);
@@ -1226,6 +1258,7 @@ function restartCurrentMatch() {
     setHostPanelStatus('Assign at least one player to Red and Blue');
     hostPanelAdvanced.classList.remove('hidden');
     hostAdvancedToggle.setAttribute('aria-expanded', 'true');
+    hostAdvancedToggle.textContent = 'Hide match setup';
     return;
   }
   matchState.players = roster;
@@ -1406,6 +1439,7 @@ function closeOnlineSession(clearState = true) {
 function configureHostPanel() {
   syncHostPlayerInfo();
   onlinePanelTitle.textContent = 'Create Room';
+  onlinePanelDescription.textContent = 'Share the code, then arrange teams when friends join.';
   primaryCodeLabel.textContent = 'Room code';
   primaryCode.value = '';
   primaryCode.readOnly = true;
@@ -1423,6 +1457,7 @@ function configureHostPanel() {
 
 function configureJoinPanel() {
   onlinePanelTitle.textContent = 'Join Room';
+  onlinePanelDescription.textContent = 'Enter the six-character code from your host.';
   primaryCodeLabel.textContent = 'Room code';
   primaryCode.value = '';
   primaryCode.readOnly = false;

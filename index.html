@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Soccer Pucks</title>
-<link rel="stylesheet" href="css/style.css?v=brand-kickoff-8" />
+<link rel="stylesheet" href="css/style.css?v=ui-refresh-1" />
 <script type="importmap">
 {
   "imports": {
@@ -142,6 +142,7 @@
 </div>
 
 <div id="menu" data-view="home">
+  <div class="menu-shell">
   <h1 class="brand-lockup">
     <span class="visually-hidden">Soccer Pucks</span>
     <svg class="brand-logo" viewBox="0 0 920 300" aria-hidden="true" focusable="false">
@@ -229,40 +230,59 @@
   </h1>
   <p class="subtitle" id="menu-subtitle">Fast 1v1 and 2v2 arcade soccer</p>
   <div id="home-actions" class="menu-screen">
-    <button id="start-btn" class="mode-btn" type="button" data-startup-action="solo">Play Solo</button>
-    <button id="online-btn" class="mode-btn" type="button" data-startup-action="online">Play Online</button>
+    <button id="start-btn" class="mode-btn" type="button" data-startup-action="solo" aria-labelledby="solo-mode-label" aria-describedby="solo-mode-detail">
+      <span id="solo-mode-label" class="mode-btn-label">Play Solo</span>
+      <span id="solo-mode-detail" class="mode-btn-detail">Jump in against the AI</span>
+    </button>
+    <button id="online-btn" class="mode-btn" type="button" data-startup-action="online" aria-labelledby="online-mode-label" aria-describedby="online-mode-detail">
+      <span id="online-mode-label" class="mode-btn-label">Play Online</span>
+      <span id="online-mode-detail" class="mode-btn-detail">Create or join a room</span>
+    </button>
   </div>
   <label id="nickname-field" class="hidden">
     <span>Nickname</span>
     <input id="nickname-input" type="text" maxlength="16" spellcheck="false" autocomplete="off" />
   </label>
-  <div id="online-choice" class="menu-screen focused-panel hidden" aria-labelledby="online-choice-title">
-    <div class="focused-panel-header">
-      <h2 id="online-choice-title" tabindex="-1">Play Online</h2>
-      <p>Create a room for friends or join with a six-character code.</p>
+  <div id="online-choice" class="menu-screen menu-panel hidden" aria-labelledby="online-choice-title">
+    <div class="menu-panel-header">
+      <div class="focused-panel-header">
+        <span class="menu-panel-kicker">Online</span>
+        <h2 id="online-choice-title" tabindex="-1">Play with friends</h2>
+        <p>Create a room or join one with a six-character code.</p>
+      </div>
+      <button id="cancel-online-choice-btn" class="tiny-btn back-btn" type="button"><span aria-hidden="true">&larr;</span> Back</button>
     </div>
     <div id="mode-actions">
       <button id="join-btn" class="mode-btn primary" type="button">Join Room</button>
       <button id="host-btn" class="mode-btn secondary" type="button">Create Room</button>
     </div>
-    <button id="cancel-online-choice-btn" class="tiny-btn back-btn" type="button">Back</button>
   </div>
-  <div id="ai-test-panel" class="hidden">
-    <div class="online-header">
-      <strong id="ai-test-title">AI Sim Tests</strong>
-      <span id="ai-test-status">Idle</span>
+  <div id="ai-test-panel" class="hidden" aria-labelledby="ai-test-title">
+    <div class="menu-panel-header">
+      <div class="focused-panel-header">
+        <span class="menu-panel-kicker">Developer tools</span>
+        <h2 id="ai-test-title" tabindex="-1">AI simulations</h2>
+        <p>Watch one scenario or run the complete headless suite.</p>
+      </div>
+      <div class="menu-panel-header-actions">
+        <span id="ai-test-status" class="status-chip" role="status" aria-live="polite" aria-atomic="true">Idle</span>
+        <button id="close-ai-tests-btn" class="tiny-btn back-btn" type="button"><span aria-hidden="true">&larr;</span> Back</button>
+      </div>
     </div>
     <div id="ai-test-scenarios"></div>
     <pre id="ai-test-output">Watch runs a scenario live in the stadium with every player AI-controlled. Run All simulates them headless and prints score, action distribution and kick/power counts per player.</pre>
     <div class="online-actions">
-      <button id="run-ai-tests-btn" class="tiny-btn">Run All (headless)</button>
-      <button id="close-ai-tests-btn" class="tiny-btn danger-btn">Close</button>
+      <button id="run-ai-tests-btn" class="start-btn" type="button">Run all headless</button>
     </div>
   </div>
-  <div id="local-panel" class="hidden">
-    <div class="focused-panel-header">
-      <h2 id="local-panel-title" tabindex="-1">Solo Match</h2>
-      <p>Choose your team, format, and AI difficulty.</p>
+  <div id="local-panel" class="hidden" aria-labelledby="local-panel-title">
+    <div class="menu-panel-header">
+      <div class="focused-panel-header">
+        <span class="menu-panel-kicker">Solo</span>
+        <h2 id="local-panel-title" tabindex="-1">Match setup</h2>
+        <p>Choose a side, match format, and difficulty.</p>
+      </div>
+      <button id="cancel-local-btn" class="tiny-btn back-btn" type="button"><span aria-hidden="true">&larr;</span> Back</button>
     </div>
     <div id="local-setup">
       <div class="setup-group">
@@ -290,25 +310,29 @@
     </div>
     <div id="local-teams">
       <section class="local-team red" aria-label="Red team">
-        <div class="local-team-name">Red Team</div>
+        <div class="local-team-name">Red</div>
         <div id="local-red-roster" class="local-team-roster"></div>
       </section>
       <section class="local-team blue" aria-label="Blue team">
-        <div class="local-team-name">Blue Team</div>
+        <div class="local-team-name">Blue</div>
         <div id="local-blue-roster" class="local-team-roster"></div>
       </section>
     </div>
     <div class="online-actions">
       <button id="start-local-btn" class="start-btn" type="button">Start Match</button>
-      <button id="cancel-local-btn" class="tiny-btn" type="button">Back</button>
     </div>
   </div>
-  <div id="online-panel" class="hidden" aria-labelledby="online-panel-title">
-    <div class="online-header">
+  <div id="online-panel" class="hidden" aria-labelledby="online-panel-title" aria-describedby="online-panel-description">
+    <div class="menu-panel-header">
       <div class="focused-panel-header">
+        <span class="menu-panel-kicker">Online</span>
         <h2 id="online-panel-title" tabindex="-1">Join Room</h2>
+        <p id="online-panel-description">Enter a room code to connect.</p>
       </div>
-      <span id="online-status" role="status" aria-live="polite" aria-atomic="true">Idle</span>
+      <div class="menu-panel-header-actions">
+        <span id="online-status" class="status-chip" role="status" aria-live="polite" aria-atomic="true">Idle</span>
+        <button id="cancel-online-btn" class="tiny-btn back-btn" type="button"><span aria-hidden="true">&larr;</span> Back</button>
+      </div>
     </div>
     <div class="online-field" id="primary-code-field">
       <label id="primary-code-label" for="primary-code">Room code</label>
@@ -331,7 +355,7 @@
       <p class="lobby-help">Choose your team. The host can rebalance players before starting.</p>
       <div id="online-teams">
         <section class="local-team red" aria-label="Red team">
-          <div class="local-team-name">Red Team</div>
+          <div class="local-team-name">Red</div>
           <div id="online-red-roster" class="local-team-roster"></div>
         </section>
         <section class="local-team spectator" aria-label="Spectators">
@@ -339,15 +363,14 @@
           <div id="online-spectator-roster" class="local-team-roster"></div>
         </section>
         <section class="local-team blue" aria-label="Blue team">
-          <div class="local-team-name">Blue Team</div>
+          <div class="local-team-name">Blue</div>
           <div id="online-blue-roster" class="local-team-roster"></div>
         </section>
       </div>
     </div>
     <div class="online-actions">
-      <button id="start-online-btn" class="start-btn hidden" disabled>Start Match</button>
-      <button id="join-room-btn" class="start-btn hidden" disabled>Join Room</button>
-      <button id="cancel-online-btn" class="tiny-btn">Back</button>
+      <button id="start-online-btn" class="start-btn hidden" type="button" disabled>Start Match</button>
+      <button id="join-room-btn" class="start-btn hidden" type="button" disabled>Join Room</button>
     </div>
   </div>
   <p id="keyboard-required" class="keyboard-required" role="note">
@@ -359,18 +382,21 @@
     <span class="hint-item"><kbd>Shift</kbd> power</span>
   </p>
   <button id="ai-test-btn" class="debug-link" type="button">AI sim tests</button>
+  </div>
 </div>
 
 <div id="loading" class="hidden" role="dialog" aria-modal="true" aria-labelledby="loading-text" aria-busy="true">
-  <div class="loading-spinner" aria-hidden="true"></div>
-  <span id="loading-text" role="status" aria-live="polite" tabindex="-1">Loading stadium...</span>
-  <div id="loading-error-actions" class="online-actions hidden">
-    <button id="loading-retry-btn" class="start-btn" type="button">Retry loading</button>
-    <button id="loading-back-btn" class="tiny-btn" type="button">Back</button>
+  <div class="loading-card">
+    <div class="loading-spinner" aria-hidden="true"></div>
+    <span id="loading-text" role="status" aria-live="polite" tabindex="-1">Loading stadium...</span>
+    <div id="loading-error-actions" class="online-actions hidden">
+      <button id="loading-retry-btn" class="start-btn" type="button">Retry loading</button>
+      <button id="loading-back-btn" class="tiny-btn" type="button">Back</button>
+    </div>
   </div>
 </div>
 
 <script type="module" src="src/brand-ball.js?v=game-ball-14"></script>
-<script type="module" src="src/main.js?v=ui-focused-14"></script>
+<script type="module" src="src/main.js?v=ui-refresh-1"></script>
 </body>
 </html>
