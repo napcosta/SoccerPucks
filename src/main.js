@@ -1,7 +1,7 @@
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { loadAssets } from './assets.js';
 import { createRenderer, createCamera, buildWorld } from './scene.js';
-import { Game } from './game.js?v=ui-focused-9';
+import { Game } from './game.js?v=ai-eval-1';
 import { readCommands, setGameplayActive, setInputLocked } from './input.js?v=ui-focused-9';
 import {
   createHostSession,
@@ -13,6 +13,13 @@ import {
 import { initDebugPanel, updatePhysicsOverlay, setIntentOverlay } from './debug.js';
 import { MATCH, TEAM } from './constants.js';
 import { gameAudio } from './audio.js';
+import {
+  loadEvaluationRuns,
+  saveEvaluationRun,
+  clearEvaluationRuns,
+  aggregateEvaluationRuns,
+  downloadEvaluationResults,
+} from './ai-evaluation-store.js';
 
 initDebugPanel();
 
@@ -22,12 +29,33 @@ const NICKNAME_MAX_LENGTH = 16;
 const INPUT_RATE = 30;
 const SNAPSHOT_RATE = 45;
 const EMPTY_COMMANDS = Object.freeze({ moveX: 0, moveZ: 0, shoot: false, power: false });
-const HERO_LABELS = Object.freeze({ sam: 'Sam', tesla: 'Tesla' });
-const HERO_POWERS = Object.freeze({ sam: 'Power: Dash', tesla: 'Power: Magnet' });
+const HERO_LABELS = Object.freeze({ sam: 'Sam', tesla: 'Tesla', shaggy: 'Shaggy Slider' });
+const HERO_POWERS = Object.freeze({
+  sam: 'Power: Dash',
+  tesla: 'Power: Magnet',
+  shaggy: 'Power: Slide',
+});
 const MIN_TIME_LIMIT_SECONDS = 30;
 const MAX_TIME_LIMIT_SECONDS = 15 * 60;
 const MAX_SCORE_LIMIT = 15;
 const NICKNAME_STORAGE_KEY = 'soccer-pucks-nickname';
+const AI_REVISION_STORAGE_KEY = 'soccer-pucks-ai-revision';
+const DEFAULT_AI_RATING_CRITERIA = Object.freeze([
+  Object.freeze({ id: 'decision', label: 'Decision quality', description: 'Did the AI choose the right behaviour for the situation?', weight: 1 }),
+  Object.freeze({ id: 'positioning', label: 'Positioning', description: 'Did it create or protect useful space?', weight: 1 }),
+  Object.freeze({ id: 'timing', label: 'Timing', description: 'Was the action taken at the right moment?', weight: 1 }),
+  Object.freeze({ id: 'execution', label: 'Execution', description: 'How accurate and controlled was the outcome?', weight: 1 }),
+  Object.freeze({ id: 'challenge', label: 'Credibility', description: 'Would this behaviour feel credible and challenging in a match?', weight: 1 }),
+]);
+const AI_KEY_EVENT_TYPES = new Set([
+  'power-used',
+  'hero-effect',
+  'ball-capture',
+  'kick',
+  'save',
+  'goal',
+  'possession-change',
+]);
 const TEAM_SPAWNS = Object.freeze({
   [TEAM.RED]: Object.freeze([
     Object.freeze({ x: 0, z: PLAYER_SPAWN_Z }),
@@ -95,8 +123,44 @@ const aiTestTitle = document.getElementById('ai-test-title');
 const aiTestStatus = document.getElementById('ai-test-status');
 const aiTestOutput = document.getElementById('ai-test-output');
 const aiTestScenarios = document.getElementById('ai-test-scenarios');
+const aiTestOverview = document.getElementById('ai-test-overview');
 const runAiTestsBtn = document.getElementById('run-ai-tests-btn');
 const closeAiTestsBtn = document.getElementById('close-ai-tests-btn');
+const aiScenariosTab = document.getElementById('ai-scenarios-tab');
+const aiResultsTab = document.getElementById('ai-results-tab');
+const aiScenariosView = document.getElementById('ai-scenarios-view');
+const aiResultsView = document.getElementById('ai-results-view');
+const aiTestDifficulty = document.getElementById('ai-test-difficulty');
+const aiTestRevision = document.getElementById('ai-test-revision');
+const aiResultsFilter = document.getElementById('ai-results-filter');
+const aiResultsCount = document.getElementById('ai-results-count');
+const aiResultsSummary = document.getElementById('ai-results-summary');
+const aiResultsHistory = document.getElementById('ai-results-history');
+const aiResultsExportBtn = document.getElementById('ai-results-export-btn');
+const aiResultsClearBtn = document.getElementById('ai-results-clear-btn');
+const aiScenarioHud = document.getElementById('ai-scenario-hud');
+const aiScenarioHudTitle = document.getElementById('ai-scenario-hud-title');
+const aiScenarioHudPhase = document.getElementById('ai-scenario-hud-phase');
+const aiScenarioHudObjective = document.getElementById('ai-scenario-hud-objective');
+const aiScenarioHudTime = document.getElementById('ai-scenario-hud-time');
+const aiScenarioStopBtn = document.getElementById('ai-scenario-stop-btn');
+const aiReviewPanel = document.getElementById('ai-review-panel');
+const aiReviewTitle = document.getElementById('ai-review-title');
+const aiReviewDescription = document.getElementById('ai-review-description');
+const aiReviewStatus = document.getElementById('ai-review-status');
+const aiReviewOutcome = document.getElementById('ai-review-outcome');
+const aiReviewOutcomeTitle = document.getElementById('ai-review-outcome-title');
+const aiReviewOutcomeReason = document.getElementById('ai-review-outcome-reason');
+const aiReviewTime = document.getElementById('ai-review-time');
+const aiReviewEvents = document.getElementById('ai-review-events');
+const aiReviewDiagnostics = document.getElementById('ai-review-diagnostics');
+const aiReviewForm = document.getElementById('ai-review-form');
+const aiReviewCriteria = document.getElementById('ai-review-criteria');
+const aiReviewNotes = document.getElementById('ai-review-notes');
+const aiReviewError = document.getElementById('ai-review-error');
+const aiReviewDiscardBtn = document.getElementById('ai-review-discard-btn');
+const aiReviewRetryBtn = document.getElementById('ai-review-retry-btn');
+const aiReviewSaveBtn = document.getElementById('ai-review-save-btn');
 const hostPanel = document.getElementById('host-panel');
 const hostPanelKicker = hostPanel.querySelector('.host-panel-kicker');
 const hostPanelTitle = document.getElementById('host-panel-title');
@@ -258,6 +322,13 @@ let onlineState = null;
 let onlineFlowId = 0;
 let hostPanelFinished = false;
 let hostPanelResultText = '';
+let aiScenarioCatalog = [];
+let activeAiScenario = null;
+let pendingAiReview = null;
+let aiTestActiveTab = 'scenarios';
+let aiReviewOpenTimer = 0;
+
+aiTestRevision.value = loadAiRevision();
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -320,6 +391,20 @@ cancelLocalBtn.addEventListener('click', closeLocalPanel);
 aiTestBtn.addEventListener('click', showAiTestPanel);
 runAiTestsBtn.addEventListener('click', runAiTests);
 closeAiTestsBtn.addEventListener('click', closeAiTestPanel);
+aiScenariosTab.addEventListener('click', () => showAiTestTab('scenarios'));
+aiResultsTab.addEventListener('click', () => showAiTestTab('results'));
+aiScenariosTab.addEventListener('keydown', handleAiTestTabKeydown);
+aiResultsTab.addEventListener('keydown', handleAiTestTabKeydown);
+aiResultsFilter.addEventListener('change', renderAiResults);
+aiResultsExportBtn.addEventListener('click', exportAiResults);
+aiResultsClearBtn.addEventListener('click', clearAiResults);
+aiScenarioStopBtn.addEventListener('click', stopAiScenario);
+aiReviewForm.addEventListener('submit', saveAiReview);
+aiReviewRetryBtn.addEventListener('click', retryAiScenario);
+aiReviewDiscardBtn.addEventListener('click', discardAiReview);
+aiTestDifficulty.addEventListener('change', refreshAiEvaluationCohort);
+aiTestRevision.addEventListener('change', refreshAiEvaluationCohort);
+aiTestRevision.addEventListener('blur', refreshAiEvaluationCohort);
 hostBtn.addEventListener('click', startHostFlow);
 joinBtn.addEventListener('click', showJoinPanel);
 copyPrimaryBtn.addEventListener('click', () => copyCode(primaryCode, 'Code copied'));
@@ -422,47 +507,179 @@ async function showAiTestPanel() {
   resetOnlinePanel();
   showMenuScreen('ai-tests');
 
-  if (!aiTestScenarios.childElementCount) {
-    try {
+  try {
+    if (!aiScenarioCatalog.length) {
+      aiTestStatus.textContent = 'Loading scenarios...';
       const { SCENARIOS } = await loadAiSimModule();
-      renderAiScenarioList(SCENARIOS);
-    } catch (err) {
-      aiTestStatus.textContent = 'Failed to load scenarios';
-      console.error(err);
+      aiScenarioCatalog = Array.isArray(SCENARIOS) ? SCENARIOS : [];
+      populateAiResultsFilter();
     }
+    renderAiScenarioList();
+    renderAiResults();
+    showAiTestTab(aiTestActiveTab);
+    aiTestStatus.textContent = `${aiScenarioCatalog.length} staged tactical scenarios`;
+  } catch (err) {
+    aiTestStatus.textContent = 'Failed to load scenarios';
+    console.error(err);
   }
 }
 
 function closeAiTestPanel() {
+  persistAiRevision();
   if (currentMenuScreen === 'ai-tests') showHomeScreen();
   else aiTestPanel.classList.add('hidden');
 }
 
-function renderAiScenarioList(scenarios) {
-  aiTestScenarios.replaceChildren();
-  for (const scenario of scenarios) {
-    const row = document.createElement('div');
-    row.className = 'ai-scenario-row';
+function showAiTestTab(tab) {
+  aiTestActiveTab = tab === 'results' ? 'results' : 'scenarios';
+  const showingResults = aiTestActiveTab === 'results';
+  aiScenariosTab.classList.toggle('selected', !showingResults);
+  aiResultsTab.classList.toggle('selected', showingResults);
+  aiScenariosTab.setAttribute('aria-selected', String(!showingResults));
+  aiResultsTab.setAttribute('aria-selected', String(showingResults));
+  aiScenariosTab.tabIndex = showingResults ? -1 : 0;
+  aiResultsTab.tabIndex = showingResults ? 0 : -1;
+  aiScenariosView.classList.toggle('hidden', showingResults);
+  aiResultsView.classList.toggle('hidden', !showingResults);
+  if (showingResults) renderAiResults();
+}
 
-    const name = document.createElement('span');
-    name.className = 'ai-scenario-name';
-    name.textContent = scenario.label;
+function handleAiTestTabKeydown(event) {
+  const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+  if (!keys.includes(event.key)) return;
+  event.preventDefault();
+  const showResults = event.key === 'ArrowRight' || event.key === 'End';
+  showAiTestTab(showResults ? 'results' : 'scenarios');
+  (showResults ? aiResultsTab : aiScenariosTab).focus();
+}
+
+function renderAiScenarioList() {
+  const runs = filterAiEvaluationCohort(loadEvaluationRuns());
+  aiTestScenarios.replaceChildren();
+  for (const scenario of aiScenarioCatalog) {
+    const currentVersionRuns = runs.filter(
+      (run) => run.scenario?.id === scenario.id && run.scenario?.version === (scenario.version ?? 1)
+    );
+    const summary = aggregateEvaluationRuns(currentVersionRuns, scenario.id)[0];
+    const card = document.createElement('article');
+    card.className = 'ai-scenario-card';
+    card.dataset.scenarioId = scenario.id;
+
+    const header = document.createElement('div');
+    header.className = 'ai-scenario-card-header';
+    const category = document.createElement('span');
+    category.className = 'ai-scenario-category';
+    category.textContent = humanizeId(scenario.category || 'behaviour');
+    const duration = document.createElement('span');
+    duration.className = 'ai-scenario-duration';
+    duration.textContent = `${formatScenarioSeconds(scenario.maxSeconds)} max`;
+    header.append(category, duration);
+
+    const title = document.createElement('h3');
+    title.textContent = scenarioTitle(scenario);
+    const objective = document.createElement('p');
+    objective.textContent = scenario.objective || 'Observe whether the AI completes the intended behaviour.';
+    const journey = createAiScenarioJourney(scenario);
+
+    const footer = document.createElement('div');
+    footer.className = 'ai-scenario-card-footer';
+    const score = document.createElement('span');
+    score.className = 'ai-scenario-score';
+    renderAiScenarioScore(score, summary);
 
     const watch = document.createElement('button');
     watch.type = 'button';
     watch.className = 'tiny-btn';
-    watch.textContent = 'Watch';
+    watch.textContent = 'Run in stadium';
+    watch.setAttribute('aria-label', `Run ${scenarioTitle(scenario)} in stadium`);
     watch.addEventListener('click', () => {
       watchAiScenario(scenario).catch((err) => {
-        aiTestStatus.textContent = 'Failed to start match';
+        aiTestStatus.textContent = 'Failed to start scenario';
         console.error(err);
       });
     });
-
-    row.appendChild(name);
-    row.appendChild(watch);
-    aiTestScenarios.appendChild(row);
+    footer.append(score, watch);
+    card.append(header, title, objective, journey, footer);
+    aiTestScenarios.appendChild(card);
   }
+  renderAiOverview(filterCurrentScenarioVersions(runs));
+}
+
+function createAiScenarioJourney(scenario) {
+  const phases = scenarioTacticalPhases(scenario);
+  const journey = document.createElement('ol');
+  journey.className = 'ai-scenario-journey';
+  journey.setAttribute('aria-label', 'Tactical stage journey');
+  for (let index = 0; index < phases.length; index++) {
+    const phase = phases[index];
+    const item = document.createElement('li');
+    const number = document.createElement('span');
+    number.className = 'ai-scenario-stage-number';
+    number.textContent = String(index + 1);
+    number.setAttribute('aria-hidden', 'true');
+    const copy = document.createElement('div');
+    const heading = document.createElement('strong');
+    heading.textContent = tacticalPhaseLabel(phase);
+    const detail = document.createElement('span');
+    detail.textContent = phase.objective || scenario.objective || 'Observe the AI response.';
+    copy.append(heading, detail);
+    if (Number.isFinite(Number(phase.maxSeconds))) {
+      const limit = document.createElement('small');
+      limit.textContent = `${formatScenarioSeconds(phase.maxSeconds)} window`;
+      copy.appendChild(limit);
+    }
+    item.append(number, copy);
+    journey.appendChild(item);
+  }
+  return journey;
+}
+
+function scenarioTacticalPhases(scenario) {
+  const phases = Array.isArray(scenario?.phases) ? scenario.phases : [];
+  if (phases.length) return phases;
+  return [
+    {
+      id: 'focused-objective',
+      label: 'Focused objective',
+      objective: scenario?.objective,
+      maxSeconds: scenario?.maxSeconds,
+    },
+  ];
+}
+
+function tacticalPhaseLabel(phase) {
+  return String(phase?.label || humanizeId(phase?.id) || 'Tactical stage');
+}
+
+function renderAiScenarioScore(score, summary) {
+  score.replaceChildren();
+  score.append(
+    summary
+      ? `${summary.attempts} run${summary.attempts === 1 ? '' : 's'} · `
+      : 'Not scored yet · '
+  );
+  if (summary?.overallAverage != null) {
+    const strong = document.createElement('strong');
+    strong.textContent = `${summary.overallAverage.toFixed(1)}/5`;
+    score.appendChild(strong);
+  } else {
+    score.append('—');
+  }
+}
+
+function refreshAiScenarioScores() {
+  const runs = filterAiEvaluationCohort(loadEvaluationRuns());
+  const cards = [...aiTestScenarios.children];
+  for (const scenario of aiScenarioCatalog) {
+    const card = cards.find((candidate) => candidate.dataset.scenarioId === scenario.id);
+    const score = card?.querySelector('.ai-scenario-score');
+    if (!score) continue;
+    const currentVersionRuns = runs.filter(
+      (run) => run.scenario?.id === scenario.id && run.scenario?.version === (scenario.version ?? 1)
+    );
+    renderAiScenarioScore(score, aggregateEvaluationRuns(currentVersionRuns, scenario.id)[0]);
+  }
+  renderAiOverview(filterCurrentScenarioVersions(runs));
 }
 
 async function watchAiScenario(scenario) {
@@ -476,26 +693,54 @@ async function watchAiScenario(scenario) {
     return;
   }
 
+  const actors = scenarioActors(scenario);
+  if (!actors.length) throw new Error(`Scenario ${scenario.id || scenarioTitle(scenario)} has no actors.`);
+
+  const selectedDifficulty = normalizeAiDifficulty(aiTestDifficulty.value);
+  const revision = normalizedAiRevision();
   const heroCounts = {};
-  const players = scenario.specs.map((spec) => {
+  const players = actors.map((spec, index) => {
     const hero = normalizeHero(spec.heroKind);
     const count = (heroCounts[hero] = (heroCounts[hero] ?? 0) + 1);
+    const position = spec.position ?? spec;
+    const velocity = spec.velocity ?? spec;
+    const team = normalizeTeam(spec.team);
+    const control = normalizeScenarioControl(spec.control ?? spec.controller ?? spec.brain);
+    const defendZSign = finiteNonZero(
+      spec.defendZSign ?? scenario.teams?.[team]?.defendZSign,
+      team === TEAM.BLUE ? -1 : 1
+    );
     return {
-      nickname: `AI ${heroName(hero)}${count > 1 ? ` ${count}` : ''}`,
+      id: spec.id || `actor-${index + 1}`,
+      nickname: spec.name || spec.nickname || `AI ${heroName(hero)}${count > 1 ? ` ${count}` : ''}`,
       heroKind: hero,
-      team: normalizeTeam(spec.team),
-      spawnX: spec.x,
-      spawnZ: spec.z,
-      control: 'ai',
+      team,
+      spawnX: finiteNumber(position.x, 0),
+      spawnZ: finiteNumber(position.z, defendZSign * PLAYER_SPAWN_Z),
+      velocityX: finiteNumber(velocity.vx ?? velocity.x, 0),
+      velocityZ: finiteNumber(velocity.vz ?? velocity.z, 0),
+      facingX: finiteNumber(spec.facing?.x ?? spec.facingX, 0),
+      facingZ: finiteNumber(spec.facing?.z ?? spec.facingZ, -defendZSign),
+      defendZSign,
+      control,
+      difficulty: control === 'ai' ? selectedDifficulty : spec.difficulty,
     };
   });
 
-  const matchSettings = defaultMatchSettings();
-  localMatchState = { started: true, players, matchSettings };
-
+  persistAiRevision();
+  localMatchState = null;
+  activeAiScenario = {
+    scenario,
+    players,
+    difficulty: selectedDifficulty,
+    revision,
+    startedAt: new Date().toISOString(),
+  };
+  pendingAiReview = null;
   setIntentOverlay(true);
   closeAiTestPanel();
   enterGameView();
+  showAiScenarioHud(scenario);
   game?.dispose();
   game = new Game({
     scene,
@@ -506,10 +751,10 @@ async function watchAiScenario(scenario) {
     audio: gameAudio,
     playerSpecs: players,
     localPlayerIndex: 0,
-    timeLimitSeconds: matchSettings.timeLimitSeconds,
-    scoreLimit: matchSettings.scoreLimit,
+    aiDifficulty: selectedDifficulty,
+    scenario,
+    onScenarioComplete: handleAiScenarioComplete,
   });
-  installEditableMatchEndHandler();
 }
 
 let aiTestsRunning = false;
@@ -523,10 +768,16 @@ async function runAiTests() {
   try {
     const { runAllScenarios } = await loadAiSimModule();
     const started = performance.now();
-    const report = await runAllScenarios(async (done, total, label) => {
-      aiTestStatus.textContent = label ? `Running ${done + 1}/${total}: ${label}` : 'Finishing...';
-      await new Promise((resolve) => setTimeout(resolve));
-    });
+    const difficulty = normalizeAiDifficulty(aiTestDifficulty.value);
+    const report = await runAllScenarios(
+      async (done, total, label) => {
+        aiTestStatus.textContent = label
+          ? `Running ${done + 1}/${total} on ${difficulty}: ${label}`
+          : 'Finishing...';
+        await new Promise((resolve) => setTimeout(resolve));
+      },
+      { difficulty }
+    );
     const elapsed = ((performance.now() - started) / 1000).toFixed(1);
     aiTestOutput.textContent = report;
     aiTestStatus.textContent = `Done in ${elapsed}s`;
@@ -538,6 +789,879 @@ async function runAiTests() {
     aiTestsRunning = false;
     runAiTestsBtn.disabled = false;
   }
+}
+
+function scenarioActors(scenario) {
+  if (Array.isArray(scenario?.actors)) return scenario.actors;
+  if (Array.isArray(scenario?.initial?.players)) return scenario.initial.players;
+  if (Array.isArray(scenario?.players)) return scenario.players;
+  if (Array.isArray(scenario?.specs)) return scenario.specs;
+  return [];
+}
+
+function scenarioTitle(scenario) {
+  return scenario?.title || scenario?.label || scenario?.id || 'Untitled scenario';
+}
+
+function scenarioRatingCriteria(scenario) {
+  const criteria = Array.isArray(scenario?.ratingCriteria)
+    ? scenario.ratingCriteria
+    : Array.isArray(scenario?.ratingRubric)
+      ? scenario.ratingRubric
+    : Array.isArray(scenario?.rubric)
+        ? scenario.rubric
+        : Array.isArray(scenario?.rubric?.criteria)
+          ? scenario.rubric.criteria
+          : DEFAULT_AI_RATING_CRITERIA;
+  return criteria.length ? criteria : DEFAULT_AI_RATING_CRITERIA;
+}
+
+function normalizeScenarioControl(control) {
+  if (control === 'idle' || control === 'static') return 'idle';
+  if (control === 'scripted') return 'scripted';
+  if (control === 'chaser') return 'chaser';
+  return 'ai';
+}
+
+function normalizeAiDifficulty(value) {
+  return ['easy', 'medium', 'hard'].includes(value) ? value : 'hard';
+}
+
+function formatScenarioSeconds(value) {
+  const seconds = Math.max(0, finiteNumber(value, 0));
+  return `${seconds.toFixed(seconds % 1 ? 1 : 0)}s`;
+}
+
+function finiteNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function finiteNonZero(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number !== 0 ? Math.sign(number) : fallback;
+}
+
+function renderAiOverview(runs) {
+  const rated = runs.filter((run) => Number.isFinite(run.rubric?.overall));
+  const average = rated.length
+    ? rated.reduce((sum, run) => sum + run.rubric.overall, 0) / rated.length
+    : null;
+  const automated = runs.filter((run) => typeof run.outcome?.passed === 'boolean');
+  const successes = automated.filter((run) => run.outcome.passed).length;
+  aiTestOverview.replaceChildren();
+  appendAiStat(aiTestOverview, 'Focused tests', String(aiScenarioCatalog.length), 'ai-overview-stat');
+  appendAiStat(aiTestOverview, 'Reviewed runs', String(runs.length), 'ai-overview-stat');
+  appendAiStat(
+    aiTestOverview,
+    'Average score',
+    average == null ? 'Not rated' : `${average.toFixed(1)} / 5`,
+    'ai-overview-stat'
+  );
+  if (automated.length) {
+    aiTestStatus.textContent = `${successes}/${automated.length} reviewed runs passed automatically`;
+  }
+}
+
+function populateAiResultsFilter() {
+  const selected = aiResultsFilter.value || 'all';
+  aiResultsFilter.replaceChildren();
+  const all = document.createElement('option');
+  all.value = 'all';
+  all.textContent = 'All scenarios';
+  aiResultsFilter.appendChild(all);
+  for (const scenario of aiScenarioCatalog) {
+    const option = document.createElement('option');
+    option.value = scenario.id;
+    option.textContent = `${scenarioTitle(scenario)} (v${scenario.version ?? 1})`;
+    aiResultsFilter.appendChild(option);
+  }
+  aiResultsFilter.value = [...aiResultsFilter.options].some((option) => option.value === selected)
+    ? selected
+    : 'all';
+}
+
+function renderAiResults() {
+  const allRuns = filterAiEvaluationCohort(loadEvaluationRuns());
+  const scenarioId = aiResultsFilter.value || 'all';
+  const currentScenario = aiScenarioCatalog.find((scenario) => scenario.id === scenarioId);
+  const currentVersion = currentScenario?.version ?? null;
+  const cohortRuns = scenarioId === 'all' ? filterCurrentScenarioVersions(allRuns) : allRuns;
+  const runs = cohortRuns
+    .filter(
+      (run) =>
+        scenarioId === 'all' ||
+        (run.scenario?.id === scenarioId &&
+          (currentVersion == null || run.scenario?.version === currentVersion))
+    )
+    .sort((a, b) => Date.parse(b.completedAt) - Date.parse(a.completedAt));
+  const rated = runs.filter((run) => Number.isFinite(run.rubric?.overall));
+  const automated = runs.filter((run) => typeof run.outcome?.passed === 'boolean');
+  const successes = automated.filter((run) => run.outcome.passed).length;
+  const average = rated.length
+    ? rated.reduce((sum, run) => sum + run.rubric.overall, 0) / rated.length
+    : null;
+  const aggregates = aggregateEvaluationRuns(runs, scenarioId);
+  const trend =
+    scenarioId !== 'all'
+      ? aggregates[0]?.trend ?? null
+      : null;
+
+  const cohortLabel = `${normalizedAiRevision()} · ${normalizeAiDifficulty(aiTestDifficulty.value)}`;
+  aiResultsCount.textContent = `${runs.length} scored run${runs.length === 1 ? '' : 's'}${currentVersion == null ? '' : ` · v${currentVersion}`} · ${cohortLabel}`;
+  aiResultsSummary.replaceChildren();
+  appendAiStat(aiResultsSummary, 'Reviewed runs', String(runs.length));
+  appendAiStat(
+    aiResultsSummary,
+    'Automatic success',
+    automated.length ? `${Math.round((successes / automated.length) * 100)}%` : 'No data'
+  );
+  appendAiStat(aiResultsSummary, 'Human average', average == null ? 'No data' : `${average.toFixed(1)} / 5`);
+  appendAiStat(
+    aiResultsSummary,
+    'Latest trend',
+    scenarioId === 'all'
+      ? 'Filter scenario'
+      : trend == null
+        ? 'Needs 2 runs'
+        : `${trend >= 0 ? '+' : ''}${trend.toFixed(1)}`
+  );
+
+  const criterionTotals = new Map();
+  for (const run of runs) {
+    const labels = new Map((run.rubric?.criteria ?? []).map((item) => [item.id, item.label]));
+    for (const [id, value] of Object.entries(run.rubric?.values ?? {})) {
+      if (!Number.isFinite(value)) continue;
+      const total = criterionTotals.get(id) ?? { label: labels.get(id) || humanizeId(id), sum: 0, count: 0 };
+      total.sum += value;
+      total.count += 1;
+      criterionTotals.set(id, total);
+    }
+  }
+  for (const total of criterionTotals.values()) {
+    appendAiStat(aiResultsSummary, total.label, `${(total.sum / total.count).toFixed(1)} / 5`);
+  }
+
+  aiResultsHistory.replaceChildren();
+  if (!runs.length) {
+    const empty = document.createElement('p');
+    empty.className = 'ai-results-empty';
+    empty.textContent = 'No reviewed runs yet. Complete a stadium scenario and save its score to build an AI performance history.';
+    aiResultsHistory.appendChild(empty);
+    return;
+  }
+
+  for (const run of runs.slice(0, 60)) {
+    const row = document.createElement('article');
+    row.className = 'ai-history-row';
+    const title = document.createElement('div');
+    title.className = 'ai-history-title';
+    const strong = document.createElement('strong');
+    strong.textContent = run.scenario?.title || run.scenario?.id || 'Scenario';
+    const detail = document.createElement('span');
+    detail.textContent = `${formatEvaluationDate(run.completedAt)} · v${run.scenario?.version ?? 1} · ${run.ai?.revision || 'unknown'} · ${run.ai?.difficulty || 'medium'}`;
+    title.append(strong, detail);
+
+    const outcome = document.createElement('span');
+    const status = normalizeOutcomeStatus(run.outcome?.status);
+    outcome.className = `ai-outcome-pill ${status}`;
+    outcome.textContent = status;
+    outcome.title = run.outcome?.reason || '';
+
+    const meta = document.createElement('span');
+    meta.className = 'ai-history-meta';
+    meta.textContent = `${finiteNumber(run.outcome?.simulatedSeconds, 0).toFixed(1)}s`;
+
+    const score = document.createElement('span');
+    score.className = 'ai-history-score';
+    score.textContent = Number.isFinite(run.rubric?.overall) ? `${run.rubric.overall.toFixed(1)}/5` : '—';
+    row.append(title, outcome, meta, score);
+    aiResultsHistory.appendChild(row);
+  }
+}
+
+function appendAiStat(container, label, value, className = 'ai-results-stat') {
+  const card = document.createElement('div');
+  card.className = className;
+  const caption = document.createElement('span');
+  caption.textContent = label;
+  const number = document.createElement('strong');
+  number.textContent = value;
+  card.append(caption, number);
+  container.appendChild(card);
+}
+
+function formatEvaluationDate(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.valueOf())) return 'Unknown date';
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
+
+function humanizeId(value) {
+  return String(value || '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function exportAiResults() {
+  const runs = loadEvaluationRuns();
+  if (!runs.length) {
+    showToast('There are no AI scores to export');
+    return;
+  }
+  if (downloadEvaluationResults(runs)) showToast(`Exported ${runs.length} AI score${runs.length === 1 ? '' : 's'}`);
+  else showToast('This browser could not create the export');
+}
+
+function clearAiResults() {
+  const runs = loadEvaluationRuns();
+  if (!runs.length) {
+    showToast('There are no AI scores to clear');
+    return;
+  }
+  if (!window.confirm(`Clear all ${runs.length} saved AI evaluation scores from this browser?`)) return;
+  clearEvaluationRuns();
+  renderAiScenarioList();
+  renderAiResults();
+  showToast('AI evaluation history cleared');
+}
+
+function loadAiRevision() {
+  try {
+    return String(localStorage.getItem(AI_REVISION_STORAGE_KEY) || 'baseline').slice(0, 40);
+  } catch {
+    return 'baseline';
+  }
+}
+
+function normalizedAiRevision() {
+  return aiTestRevision.value.trim().replace(/\s+/g, ' ').slice(0, 40) || 'baseline';
+}
+
+function persistAiRevision() {
+  aiTestRevision.value = normalizedAiRevision();
+  try {
+    localStorage.setItem(AI_REVISION_STORAGE_KEY, aiTestRevision.value);
+  } catch {
+    // Evaluation still works in memory when persistent browser storage is unavailable.
+  }
+}
+
+function filterAiEvaluationCohort(runs) {
+  const revision = normalizedAiRevision();
+  const difficulty = normalizeAiDifficulty(aiTestDifficulty.value);
+  return runs.filter(
+    (run) => run.ai?.revision === revision && run.ai?.difficulty === difficulty
+  );
+}
+
+function filterCurrentScenarioVersions(runs) {
+  const currentVersions = new Map(
+    aiScenarioCatalog.map((scenario) => [scenario.id, scenario.version ?? 1])
+  );
+  return runs.filter(
+    (run) => currentVersions.get(run.scenario?.id) === (run.scenario?.version ?? 1)
+  );
+}
+
+function refreshAiEvaluationCohort() {
+  persistAiRevision();
+  if (!aiScenarioCatalog.length || currentMenuScreen !== 'ai-tests') return;
+  refreshAiScenarioScores();
+  renderAiResults();
+}
+
+function showAiScenarioHud(scenario) {
+  const firstPhase = scenarioTacticalPhases(scenario)[0];
+  aiScenarioHudTitle.textContent = scenarioTitle(scenario);
+  aiScenarioHudPhase.textContent = formatTacticalPhaseHeading(firstPhase, 0, scenario);
+  aiScenarioHudObjective.textContent =
+    firstPhase?.objective || scenario.objective || 'Observe the AI behaviour.';
+  aiScenarioHudTime.textContent = `0.0 / ${finiteNumber(scenario.maxSeconds, 0).toFixed(1)}s`;
+  aiScenarioHud.classList.remove('hidden');
+}
+
+function updateAiScenarioHud() {
+  if (!activeAiScenario || !game || aiScenarioHud.classList.contains('hidden')) return;
+  const progress = game.getScenarioProgress?.() ?? {};
+  const elapsed = finiteNumber(progress.elapsed ?? progress.elapsedSeconds, 0);
+  const maximum = finiteNumber(progress.maxSeconds, activeAiScenario.scenario.maxSeconds);
+  const tacticalPhase = normalizeTacticalPhase(progress.tacticalPhase);
+  if (tacticalPhase) {
+    aiScenarioHudPhase.textContent = formatTacticalPhaseHeading(
+      tacticalPhase,
+      tacticalPhase.index,
+      activeAiScenario.scenario
+    );
+    aiScenarioHudObjective.textContent =
+      tacticalPhase.objective || activeAiScenario.scenario.objective || 'Observe the AI behaviour.';
+  }
+  aiScenarioHudTime.textContent = `${elapsed.toFixed(1)} / ${maximum.toFixed(1)}s`;
+}
+
+function formatTacticalPhaseHeading(phase, fallbackIndex, scenario) {
+  const phases = scenarioTacticalPhases(scenario);
+  const index = Math.max(0, Math.trunc(finiteNumber(phase?.index, fallbackIndex)));
+  const total = Math.max(phases.length, index + 1);
+  const label = tacticalPhaseLabel(phase ?? phases[index]);
+  const elapsed = finiteNumber(phase?.elapsedSeconds, NaN);
+  const maximum = finiteNumber(phase?.maxSeconds, NaN);
+  const timing = Number.isFinite(elapsed)
+    ? ` · ${elapsed.toFixed(1)}${Number.isFinite(maximum) ? `/${maximum.toFixed(1)}` : ''}s`
+    : '';
+  return `Stage ${index + 1}/${total} · ${label}${timing}`;
+}
+
+function normalizeTacticalPhase(value) {
+  if (!value || typeof value !== 'object') return null;
+  const id = String(value.id || '').trim();
+  return {
+    id,
+    index: Math.max(0, Math.trunc(finiteNumber(value.index, 0))),
+    label: String(value.label || humanizeId(id) || 'Tactical stage'),
+    objective: String(value.objective || ''),
+    elapsedSeconds: Math.max(0, finiteNumber(value.elapsedSeconds, 0)),
+    maxSeconds: Number.isFinite(Number(value.maxSeconds))
+      ? Math.max(0, Number(value.maxSeconds))
+      : null,
+  };
+}
+
+function stopAiScenario() {
+  if (!activeAiScenario || !game) return;
+  aiScenarioStopBtn.disabled = true;
+  if (typeof game.abortScenario === 'function') {
+    game.abortScenario('Stopped by reviewer');
+    return;
+  }
+  handleAiScenarioComplete({
+    status: 'aborted',
+    reason: 'Stopped by reviewer',
+    elapsedSeconds: 0,
+    metrics: {},
+    events: [],
+  });
+}
+
+function handleAiScenarioComplete(result) {
+  if (!activeAiScenario || pendingAiReview) return;
+  const outcome = normalizeScenarioOutcome(result);
+  pendingAiReview = {
+    active: activeAiScenario,
+    rawResult: result,
+    outcome,
+    completedAt: new Date().toISOString(),
+  };
+  aiScenarioStopBtn.disabled = true;
+  if (outcome.diagnostics.tacticalPhase) {
+    aiScenarioHudPhase.textContent = formatTacticalPhaseHeading(
+      outcome.diagnostics.tacticalPhase,
+      outcome.diagnostics.tacticalPhase.index,
+      activeAiScenario.scenario
+    );
+  }
+  aiScenarioHudObjective.textContent = humanizeOutcomeReason(outcome.reason);
+  aiScenarioHudTime.textContent = `${outcome.simulatedSeconds.toFixed(1)} / ${finiteNumber(activeAiScenario.scenario.maxSeconds, 0).toFixed(1)}s`;
+  clearTimeout(aiReviewOpenTimer);
+  aiReviewOpenTimer = window.setTimeout(openAiReviewPanel, outcome.status === 'aborted' ? 0 : 850);
+}
+
+function normalizeScenarioOutcome(result = {}) {
+  const nested = result?.outcome && typeof result.outcome === 'object' ? result.outcome : {};
+  const status = normalizeOutcomeStatus(
+    nested.status ??
+      (typeof result.outcome === 'string' ? result.outcome : null) ??
+      result.status ??
+      result.phase
+  );
+  const events = Array.isArray(result.events) ? result.events : [];
+  const metrics = {
+    ...(nested.metrics && typeof nested.metrics === 'object' ? nested.metrics : {}),
+    ...(result.metrics && typeof result.metrics === 'object' ? result.metrics : {}),
+  };
+  if (result.tuning && typeof result.tuning === 'object') metrics.tuning = result.tuning;
+  if (result.simulation && typeof result.simulation === 'object') {
+    metrics.frames = finiteNumber(result.simulation.frames, metrics.frames);
+    metrics.simulationHz = finiteNumber(result.simulation.hz, metrics.simulationHz);
+  }
+  if (!Number.isFinite(metrics.eventCount)) metrics.eventCount = events.length;
+  metrics.keyEventCount = events.filter((event) => AI_KEY_EVENT_TYPES.has(event?.type)).length;
+  const diagnostics = normalizeTacticalDiagnostics(result, events);
+  metrics.tacticalDiagnostics = diagnostics;
+  const passed = typeof nested.passed === 'boolean'
+    ? nested.passed
+    : typeof result.passed === 'boolean'
+      ? result.passed
+      : status === 'success'
+        ? true
+        : status === 'failure' || status === 'timeout'
+          ? false
+          : null;
+  return {
+    status,
+    passed,
+    reason: String(
+      nested.reason ??
+        result.reason ??
+        (humanizeId(nested.conditionId ?? result.conditionId ?? result.criterionId) || 'Scenario ended')
+    ),
+    conditionId: String(nested.conditionId ?? result.conditionId ?? result.criterionId ?? ''),
+    simulatedSeconds: Math.max(
+      0,
+      finiteNumber(
+        nested.simulatedSeconds ??
+          result.simulatedSeconds ??
+          result.simulation?.elapsedSeconds ??
+          result.elapsedSeconds ??
+          result.elapsed,
+        0
+      )
+    ),
+    metrics,
+    diagnostics,
+  };
+}
+
+function normalizeOutcomeStatus(value) {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized === 'passed' || normalized === 'pass') return 'success';
+  if (normalized === 'failed' || normalized === 'fail') return 'failure';
+  if (normalized === 'timed_out' || normalized === 'timed-out') return 'timeout';
+  if (normalized === 'stopped' || normalized === 'cancelled' || normalized === 'canceled') return 'aborted';
+  return ['success', 'failure', 'timeout', 'aborted'].includes(normalized) ? normalized : 'failure';
+}
+
+function normalizeTacticalDiagnostics(result, events = []) {
+  const source = result?.diagnostics && typeof result.diagnostics === 'object' ? result.diagnostics : {};
+  const metricSource = result?.metrics && typeof result.metrics === 'object' ? result.metrics : {};
+  const phaseHistorySource = Array.isArray(result?.phaseHistory)
+    ? result.phaseHistory
+    : Array.isArray(source.phaseHistory)
+      ? source.phaseHistory
+      : Array.isArray(metricSource.phaseHistory)
+        ? metricSource.phaseHistory
+        : events.filter((event) => event?.type === 'phase-start' || event?.type === 'phase-complete');
+  const phaseHistory = phaseHistorySource.map((entry) => ({
+    type: entry?.type === 'phase-complete' ? 'phase-complete' : 'phase-start',
+    phaseId: String(entry?.phaseId || entry?.tacticalPhaseId || ''),
+    phaseIndex: Math.max(0, Math.trunc(finiteNumber(entry?.phaseIndex, 0))),
+    time: Math.max(0, finiteNumber(entry?.time, 0)),
+    reason: String(entry?.reason || ''),
+  }));
+
+  const opportunitySource =
+    (result?.opportunities && typeof result.opportunities === 'object' && result.opportunities) ||
+    (source.opportunities && typeof source.opportunities === 'object' && source.opportunities) ||
+    (metricSource.opportunities && typeof metricSource.opportunities === 'object' &&
+      metricSource.opportunities) ||
+    {};
+  const opportunities = {};
+  for (const [key, value] of Object.entries(opportunitySource)) {
+    if (!value || typeof value !== 'object') continue;
+    const id = String(value.id || key);
+    opportunities[id] = {
+      id,
+      label: String(value.label || humanizeId(id) || 'Opportunity'),
+      open: Boolean(value.open),
+      openedAt: finiteDiagnosticNumber(value.openedAt),
+      windows: (Array.isArray(value.windows) ? value.windows : []).map((window) => ({
+        openedAt: Math.max(0, finiteNumber(window?.openedAt, 0)),
+        closedAt: finiteDiagnosticNumber(window?.closedAt),
+        durationSeconds: Math.max(0, finiteNumber(window?.durationSeconds, 0)),
+      })),
+    };
+  }
+
+  const probeSource =
+    (source.probes && typeof source.probes === 'object' && source.probes) ||
+    (metricSource.probes && typeof metricSource.probes === 'object' && metricSource.probes) ||
+    {};
+  const probes = {};
+  for (const [key, value] of Object.entries(probeSource)) {
+    if (!value || typeof value !== 'object') continue;
+    const id = String(value.id || key);
+    probes[id] = {
+      id,
+      label: String(value.label || humanizeId(id) || 'Probe'),
+      measure: String(value.measure || ''),
+      samples: Math.max(0, Math.trunc(finiteNumber(value.samples, 0))),
+      min: finiteDiagnosticNumber(value.min),
+      minAt: finiteDiagnosticNumber(value.minAt),
+      max: finiteDiagnosticNumber(value.max),
+      maxAt: finiteDiagnosticNumber(value.maxAt),
+      average: finiteDiagnosticNumber(value.average),
+      last: finiteDiagnosticNumber(value.last),
+      lastAt: finiteDiagnosticNumber(value.lastAt),
+    };
+  }
+
+  const transitionSource =
+    (source.actionTransitionsByActor &&
+      typeof source.actionTransitionsByActor === 'object' &&
+      source.actionTransitionsByActor) ||
+    (metricSource.actionTransitionsByActor &&
+      typeof metricSource.actionTransitionsByActor === 'object' &&
+      metricSource.actionTransitionsByActor) ||
+    deriveActionTransitions(events);
+  const actionTransitionsByActor = {};
+  for (const [actorId, transitions] of Object.entries(transitionSource)) {
+    if (!Array.isArray(transitions)) continue;
+    actionTransitionsByActor[actorId] = transitions.map((transition) => ({
+      time: Math.max(0, finiteNumber(transition?.time, 0)),
+      from: String(transition?.from || ''),
+      to: String(transition?.to || ''),
+      intent: String(transition?.intent || ''),
+      tacticalPhaseId: String(transition?.tacticalPhaseId || ''),
+      targetX: finiteDiagnosticNumber(transition?.targetX),
+      targetZ: finiteDiagnosticNumber(transition?.targetZ),
+    }));
+  }
+
+  return {
+    tacticalPhase: normalizeTacticalPhase(result?.tacticalPhase),
+    phaseHistory,
+    opportunities,
+    probes,
+    actionTransitionsByActor,
+  };
+}
+
+function deriveActionTransitions(events) {
+  const transitions = {};
+  const previousByActor = new Map();
+  for (const event of events) {
+    if (event?.type !== 'decision' || !event.actorId) continue;
+    const actorId = String(event.actorId);
+    const next = String(event.action || 'unknown');
+    const previous = previousByActor.get(actorId);
+    if (previous === next) continue;
+    (transitions[actorId] ??= []).push({
+      time: finiteNumber(event.time, 0),
+      from: previous ?? '',
+      to: next,
+      intent: event.intent,
+      tacticalPhaseId: event.tacticalPhaseId,
+      targetX: event.targetX,
+      targetZ: event.targetZ,
+    });
+    previousByActor.set(actorId, next);
+  }
+  return transitions;
+}
+
+function finiteDiagnosticNumber(value) {
+  if (value == null || value === '') return null;
+  return Number.isFinite(Number(value)) ? Number(value) : null;
+}
+
+function openAiReviewPanel() {
+  if (!pendingAiReview) return;
+  const { active, outcome } = pendingAiReview;
+  const scenario = active.scenario;
+  const criteria = scenarioRatingCriteria(scenario);
+  aiReviewTitle.textContent = scenarioTitle(scenario);
+  aiReviewDescription.textContent = scenario.objective || 'Score the behaviour you observed.';
+  aiReviewStatus.textContent = `Automatic ${outcome.status}`;
+  aiReviewOutcome.className = `ai-review-outcome ${outcome.status}`;
+  aiReviewOutcomeTitle.textContent = {
+    success: 'Objective achieved',
+    failure: 'Objective failed',
+    timeout: 'Scenario timed out',
+    aborted: 'Scenario stopped',
+  }[outcome.status];
+  aiReviewOutcomeReason.textContent = humanizeOutcomeReason(outcome.reason);
+  aiReviewTime.textContent = `${outcome.simulatedSeconds.toFixed(2)}s`;
+  aiReviewEvents.textContent = String(finiteNumber(outcome.metrics.keyEventCount, 0));
+  renderAiReviewDiagnostics(outcome.diagnostics, scenario);
+  aiReviewCriteria.replaceChildren();
+  aiReviewNotes.value = '';
+  aiReviewError.textContent = '';
+  aiReviewSaveBtn.disabled = false;
+
+  criteria.forEach((criterion, index) => {
+    const id = String(criterion.id || `criterion-${index + 1}`);
+    const fieldset = document.createElement('fieldset');
+    fieldset.className = 'ai-rating-group';
+    fieldset.dataset.criterionId = id;
+    const legend = document.createElement('legend');
+    legend.textContent = criterion.label || criterion.title || humanizeId(id);
+    const help = document.createElement('p');
+    help.className = 'ai-rating-help';
+    help.textContent = criterion.description || criterion.help || 'Rate from weak (1) to excellent (5).';
+    const options = document.createElement('div');
+    options.className = 'ai-rating-options';
+    for (let score = 1; score <= 5; score++) {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = `ai-rating-${index}`;
+      input.value = String(score);
+      input.required = true;
+      const visible = document.createElement('span');
+      visible.textContent = String(score);
+      label.append(input, visible);
+      options.appendChild(label);
+    }
+    fieldset.append(legend, help, options);
+    aiReviewCriteria.appendChild(fieldset);
+  });
+
+  aiReviewPanel.classList.remove('hidden');
+  aiReviewPanel.setAttribute('aria-hidden', 'false');
+  canvas.inert = true;
+  hudRoot.inert = true;
+  soundControls.inert = true;
+  setInputLocked(true);
+  setGameplayActive(false);
+  aiReviewCriteria.querySelector('input')?.focus();
+}
+
+function renderAiReviewDiagnostics(diagnostics, scenario) {
+  aiReviewDiagnostics.replaceChildren();
+  const history = diagnostics?.phaseHistory ?? [];
+  const opportunities = Object.values(diagnostics?.opportunities ?? {});
+  const probes = Object.values(diagnostics?.probes ?? {});
+  const transitions = diagnostics?.actionTransitionsByActor ?? {};
+  const transitionCount = Object.values(transitions).reduce(
+    (total, actorTransitions) => total + actorTransitions.length,
+    0
+  );
+  if (!history.length && !opportunities.length && !probes.length && !transitionCount) {
+    aiReviewDiagnostics.classList.add('hidden');
+    return;
+  }
+
+  const header = document.createElement('div');
+  header.className = 'ai-review-diagnostics-header';
+  const title = document.createElement('strong');
+  title.textContent = 'Tactical trace';
+  const summary = document.createElement('span');
+  const completedPhases = history.filter((entry) => entry.type === 'phase-complete').length;
+  summary.textContent = `${completedPhases} stage${completedPhases === 1 ? '' : 's'} completed`;
+  header.append(title, summary);
+
+  const journey = document.createElement('ol');
+  journey.className = 'ai-review-phase-path';
+  const phaseDefinitions = new Map(scenarioTacticalPhases(scenario).map((phase) => [phase.id, phase]));
+  const starts = history.filter((entry) => entry.type === 'phase-start');
+  for (const entry of starts) {
+    const item = document.createElement('li');
+    const definition = phaseDefinitions.get(entry.phaseId);
+    const label = document.createElement('strong');
+    label.textContent = tacticalPhaseLabel(definition ?? { id: entry.phaseId });
+    const completion = history.find(
+      (candidate) => candidate.type === 'phase-complete' && candidate.phaseId === entry.phaseId
+    );
+    const timing = document.createElement('span');
+    timing.textContent = completion
+      ? `${entry.time.toFixed(2)}–${completion.time.toFixed(2)}s`
+      : `from ${entry.time.toFixed(2)}s`;
+    item.classList.toggle('complete', Boolean(completion));
+    item.append(label, timing);
+    journey.appendChild(item);
+  }
+
+  const stats = document.createElement('dl');
+  stats.className = 'ai-review-diagnostic-stats';
+  appendReviewDiagnosticStat(stats, 'Opportunity windows', String(countOpportunityWindows(opportunities)));
+  appendReviewDiagnosticStat(stats, 'Probes', String(probes.length));
+  appendReviewDiagnosticStat(stats, 'Decision shifts', String(transitionCount));
+
+  const details = document.createElement('div');
+  details.className = 'ai-review-diagnostic-details';
+  for (const opportunity of opportunities.slice(0, 2)) {
+    const windowCount = opportunity.windows.length + (opportunity.open ? 1 : 0);
+    appendReviewDiagnosticLine(
+      details,
+      opportunity.label,
+      `${windowCount} window${windowCount === 1 ? '' : 's'}${opportunity.open ? ' · open at finish' : ''}`
+    );
+  }
+  for (const probe of probes.slice(0, 2)) {
+    const range = probe.min == null || probe.max == null ? 'no range' : `${formatProbeValue(probe.min)}–${formatProbeValue(probe.max)}`;
+    const average = probe.average == null ? '' : ` · avg ${formatProbeValue(probe.average)}`;
+    appendReviewDiagnosticLine(details, probe.label, `${range}${average}`);
+  }
+  for (const [actorId, actorTransitions] of Object.entries(transitions).slice(0, 2)) {
+    const path = actorTransitions
+      .slice(-4)
+      .map((transition) => humanizeId(transition.to || transition.from || 'unknown'))
+      .join(' → ');
+    appendReviewDiagnosticLine(details, humanizeId(actorId), path || 'No decision shift');
+  }
+
+  aiReviewDiagnostics.append(header);
+  if (journey.childElementCount) aiReviewDiagnostics.appendChild(journey);
+  aiReviewDiagnostics.append(stats, details);
+  aiReviewDiagnostics.classList.remove('hidden');
+}
+
+function appendReviewDiagnosticStat(list, label, value) {
+  const item = document.createElement('div');
+  const term = document.createElement('dt');
+  term.textContent = label;
+  const description = document.createElement('dd');
+  description.textContent = value;
+  item.append(term, description);
+  list.appendChild(item);
+}
+
+function appendReviewDiagnosticLine(container, label, value) {
+  const row = document.createElement('p');
+  const strong = document.createElement('strong');
+  strong.textContent = label;
+  const span = document.createElement('span');
+  span.textContent = value;
+  row.append(strong, span);
+  container.appendChild(row);
+}
+
+function countOpportunityWindows(opportunities) {
+  return opportunities.reduce(
+    (total, opportunity) => total + opportunity.windows.length + (opportunity.open ? 1 : 0),
+    0
+  );
+}
+
+function formatProbeValue(value) {
+  const absolute = Math.abs(value);
+  return absolute >= 100 ? value.toFixed(0) : absolute >= 10 ? value.toFixed(1) : value.toFixed(2);
+}
+
+function humanizeOutcomeReason(reason) {
+  const text = String(reason || 'Scenario ended').trim();
+  if (!text) return 'Scenario ended';
+  if (/^[a-z0-9_-]+$/i.test(text)) return humanizeId(text);
+  return text;
+}
+
+function saveAiReview(event) {
+  event.preventDefault();
+  if (!pendingAiReview) return;
+  const criteria = scenarioRatingCriteria(pendingAiReview.active.scenario);
+  const values = {};
+  const fieldsets = [...aiReviewCriteria.querySelectorAll('.ai-rating-group')];
+  for (const fieldset of fieldsets) {
+    const selected = fieldset.querySelector('input:checked');
+    if (!selected) {
+      aiReviewError.textContent = 'Rate every parameter before saving this run.';
+      fieldset.querySelector('input')?.focus();
+      return;
+    }
+    values[fieldset.dataset.criterionId] = Number(selected.value);
+  }
+
+  aiReviewSaveBtn.disabled = true;
+  const { active, outcome, completedAt } = pendingAiReview;
+  try {
+    const savedRun = saveEvaluationRun({
+      scenario: {
+        id: active.scenario.id,
+        version: active.scenario.version ?? 1,
+        title: scenarioTitle(active.scenario),
+        category: active.scenario.category || 'behaviour',
+      },
+      setup: scenarioSetupSnapshot(active),
+      ai: { revision: active.revision, difficulty: active.difficulty },
+      outcome,
+      rubric: {
+        criteria: criteria.map((criterion, index) => ({
+          id: criterion.id || `criterion-${index + 1}`,
+          label: criterion.label || criterion.title || humanizeId(criterion.id),
+          weight: finiteNumber(criterion.weight, 1),
+        })),
+        values,
+        notes: aiReviewNotes.value,
+      },
+      startedAt: active.startedAt,
+      completedAt,
+    });
+    if (savedRun.persistence === 'memory') {
+      showToast('Score kept for this session only; browser storage is unavailable');
+    } else {
+      showToast('AI evaluation score saved');
+    }
+  } catch (error) {
+    aiReviewSaveBtn.disabled = false;
+    aiReviewError.textContent = error?.message || 'Could not save this evaluation.';
+    return;
+  }
+  returnToAiEvaluationLab('results');
+}
+
+function scenarioSetupSnapshot(active) {
+  const scenario = active.scenario;
+  const ball = scenario.initial?.ball ?? scenario.ball ?? { x: 0, z: 0, vx: 0, vz: 0 };
+  return {
+    ball: {
+      x: finiteNumber(ball.x, 0),
+      z: finiteNumber(ball.z, 0),
+      vx: finiteNumber(ball.vx, 0),
+      vz: finiteNumber(ball.vz, 0),
+    },
+    players: active.players.map((player) => ({
+      id: player.id,
+      heroKind: player.heroKind,
+      team: player.team,
+      control: player.control,
+      difficulty: player.difficulty,
+      x: player.spawnX,
+      z: player.spawnZ,
+      vx: player.velocityX,
+      vz: player.velocityZ,
+      defendZSign: player.defendZSign,
+    })),
+  };
+}
+
+function retryAiScenario() {
+  const active = pendingAiReview?.active;
+  if (!active) return;
+  const scenario = active.scenario;
+  aiTestDifficulty.value = active.difficulty;
+  aiTestRevision.value = active.revision;
+  closeAiReviewPanel();
+  disposeAiScenario();
+  watchAiScenario(scenario).catch((error) => {
+    console.error(error);
+    returnToAiEvaluationLab('scenarios');
+  });
+}
+
+function discardAiReview() {
+  returnToAiEvaluationLab('scenarios');
+}
+
+function returnToAiEvaluationLab(tab = 'scenarios') {
+  closeAiReviewPanel();
+  disposeAiScenario();
+  hudRoot.classList.add('hidden');
+  menu.classList.remove('hidden');
+  aiTestActiveTab = tab;
+  showAiTestPanel().catch((error) => console.error(error));
+}
+
+function disposeAiScenario() {
+  clearTimeout(aiReviewOpenTimer);
+  aiReviewOpenTimer = 0;
+  setGameplayActive(false);
+  game?.dispose();
+  game = null;
+  localMatchState = null;
+  activeAiScenario = null;
+  pendingAiReview = null;
+  aiScenarioHud.classList.add('hidden');
+  aiScenarioStopBtn.disabled = false;
+  setIntentOverlay(false);
+}
+
+function closeAiReviewPanel() {
+  aiReviewPanel.classList.add('hidden');
+  aiReviewPanel.setAttribute('aria-hidden', 'true');
+  canvas.inert = false;
+  hudRoot.inert = false;
+  soundControls.inert = false;
+  setInputLocked(false);
 }
 
 function closeLocalPanel() {
@@ -907,6 +2031,24 @@ function returnToMenu() {
 }
 
 function handleHostPanelShortcut(event) {
+  if (isAiReviewPanelOpen()) {
+    if (event.code === 'Tab') {
+      trapAiReviewFocus(event);
+      return;
+    }
+    if (event.code === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      aiReviewDiscardBtn.focus();
+    }
+    return;
+  }
+  if (activeAiScenario && event.code === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) stopAiScenario();
+    return;
+  }
   if (event.code === 'Tab' && isHostPanelOpen()) {
     trapHostPanelFocus(event);
     return;
@@ -1016,6 +2158,10 @@ function isHostPanelOpen() {
   return !hostPanel.classList.contains('hidden');
 }
 
+function isAiReviewPanelOpen() {
+  return !aiReviewPanel.classList.contains('hidden');
+}
+
 function toggleHostAdvanced() {
   const expanded = hostAdvancedToggle.getAttribute('aria-expanded') === 'true';
   hostAdvancedToggle.setAttribute('aria-expanded', String(!expanded));
@@ -1030,6 +2176,25 @@ function toggleHostAdvanced() {
 function trapHostPanelFocus(event) {
   const focusable = Array.from(
     hostPanel.querySelectorAll('button:not([disabled]):not(.hidden), input:not([disabled]), select:not([disabled])')
+  ).filter((element) => !element.closest('.hidden'));
+  if (!focusable.length) return;
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function trapAiReviewFocus(event) {
+  const focusable = Array.from(
+    aiReviewPanel.querySelectorAll(
+      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled])'
+    )
   ).filter((element) => !element.closest('.hidden'));
   if (!focusable.length) return;
 
@@ -1918,6 +3083,7 @@ function ensureWebRtcAvailable() {
 
 function normalizeHero(heroKind) {
   if (heroKind === 'tesla') return 'tesla';
+  if (heroKind === 'shaggy') return 'shaggy';
   return 'sam';
 }
 
@@ -2167,6 +3333,7 @@ function frame(now) {
 
   const soloPaused = Boolean(localMatchState?.started && isHostPanelOpen());
   if (game && !soloPaused) game.update(dt);
+  updateAiScenarioHud();
   updateOnlineTransport(dt);
   scoreboard?.syncPosition();
   updatePhysicsOverlay(game, dt);

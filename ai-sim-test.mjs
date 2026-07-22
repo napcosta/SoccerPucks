@@ -1,351 +1,190 @@
-import { PLAYER, BALL, PITCH } from './src/constants.js';
+import { SCENARIOS, findScenario, SCENARIO_SCHEMA_VERSION } from './src/ai-scenarios.js';
 import {
-  createBody,
-  integrate,
-  clampSpeed,
-  collideWalls,
-  collidePlayerBounds,
-  collideGoalPosts,
-  collideCircles,
-  isTouching,
-  goalScored,
-} from './src/physics.js';
-import {
-  computeAICommands,
-  createTeamAIState,
-  resetTeamAIState,
-  AI_DIFFICULTY,
-} from './src/ai.js';
-import { createHero } from './src/heroes.js';
-import { TUNING } from './src/tuning.js';
+  SCENARIO_HZ,
+  SCENARIO_DT,
+  createScenarioWorld,
+  createScenarioTracker,
+  stepScenarioWorld,
+  projectedGoalTeam,
+  runScenario,
+} from './src/ai-scenario-runtime.js';
 
-function makePlayer(spec) {
-  const player = {
-    heroKind: spec.heroKind,
-    team: spec.team,
-    control: spec.control ?? 'ai',
-    difficulty: spec.difficulty ?? null,
-    spawnX: spec.x,
-    spawnZ: spec.z,
-    body: createBody(spec.x, spec.z, PLAYER.radius, PLAYER.mass),
-    facingX: 0,
-    facingZ: -Math.sign(spec.z),
-    shootHeld: false,
-    powerHeld: false,
-    ai: {},
-  };
-  player.hero = createHero(spec.heroKind, player);
-  return player;
+export {
+  SCENARIOS,
+  SCENARIO_SCHEMA_VERSION,
+  SCENARIO_HZ,
+  SCENARIO_DT,
+  findScenario,
+  createScenarioWorld,
+  createScenarioTracker,
+  stepScenarioWorld,
+  projectedGoalTeam,
+  runScenario,
+};
+
+export function runScenarioById(id, options) {
+  const scenario = findScenario(id);
+  if (!scenario) throw new RangeError(`Unknown AI scenario: ${id}`);
+  return runScenario(scenario, options);
 }
 
-// Scripted stand-ins for a human on the pad: 'idle' never moves (an AFK teammate),
-// 'chaser' naively runs at the ball and hoofs it straight at the opposing goal.
-function scriptedCommands(p, ball) {
-  if (p.control !== 'chaser') {
-    return { moveX: 0, moveZ: 0, shoot: false, kickX: 0, kickZ: 0, kickMultiplier: 1, power: false };
+export async function runAllScenarioResults(onProgress, options = {}) {
+  const results = [];
+  const total = SCENARIOS.length;
+  for (let index = 0; index < total; index++) {
+    const scenario = SCENARIOS[index];
+    await onProgress?.(index, total, scenario.label);
+    results.push(runScenario(scenario, options));
   }
-  const dx = ball.x - p.body.x;
-  const dz = ball.z - p.body.z;
-  const dist = Math.hypot(dx, dz) || 1;
-  const goalZ = -Math.sign(p.spawnZ) * PITCH.halfLength;
-  return {
-    moveX: (dx / dist) * 0.8,
-    moveZ: (dz / dist) * 0.8,
-    shoot: isTouching(p.body, ball, TUNING.player.shootRange),
-    kickX: -ball.x,
-    kickZ: goalZ - ball.z,
-    kickMultiplier: 1,
-    power: false,
-  };
+  await onProgress?.(total, total, null);
+  return results;
 }
 
-function resetKickoff(ball, players, teamStates) {
-  ball.x = 0;
-  ball.z = 0;
-  ball.vx = 0;
-  ball.vz = 0;
-  for (const p of players) {
-    p.body.x = p.spawnX;
-    p.body.z = p.spawnZ;
-    p.body.vx = 0;
-    p.body.vz = 0;
-    p.shootHeld = false;
-    p.powerHeld = false;
-    if (p.hero.active) p.hero.release?.(ball);
+// Kept as a text-returning facade for both existing UIs. Call
+// runAllScenarioResults() when structured data is needed.
+export async function runAllScenarios(onProgress, options = {}) {
+  const results = await runAllScenarioResults(onProgress, options);
+  return formatSuiteReport(results);
+}
+
+export function formatSuiteReport(results) {
+  const reports = results.map(formatScenarioResult);
+  const counts = { success: 0, failure: 0, timeout: 0, aborted: 0 };
+  for (const result of results) {
+    const key = result.outcome ?? 'aborted';
+    counts[key] = (counts[key] ?? 0) + 1;
   }
-  for (const state of teamStates.values()) resetTeamAIState(state);
+
+  reports.push(
+    [
+      '=== Scenario suite summary ===',
+      `success ${counts.success}  failure ${counts.failure}  timeout ${counts.timeout}  aborted ${counts.aborted}`,
+      `all succeeded: ${counts.success === results.length}`,
+      'note: staged failures are diagnostic evidence, not automatically harness errors',
+    ].join('\n')
+  );
+  return reports.join('\n\n');
 }
 
-export function runMatch(label, specs, seconds = 180) {
+export function formatScenarioResult(result) {
   const lines = [];
-  const log = (text) => lines.push(text);
-  const ball = createBody(0, 0, BALL.radius, BALL.mass);
-  const players = specs.map((s) => makePlayer(s));
-  const teamStates = new Map();
-  const teamState = (team) => {
-    if (!teamStates.has(team)) teamStates.set(team, createTeamAIState());
-    return teamStates.get(team);
-  };
-  const score = { 1: 0, 2: 0 };
-  const actionFrames = new Map();
-  const kickEvents = new Map();
-  const powerEvents = new Map();
-  let tick = 0;
-  let abandonedFrames = 0;
-  let slowUnclaimedStreak = 0;
-  const dt = 1 / 60;
-  const steps = Math.round(seconds * 60);
+  const { scenario, simulation, metrics } = result;
+  lines.push(`=== ${scenario.title} [${scenario.id}@${scenario.version}] ===`);
+  lines.push(
+    `outcome: ${(result.outcome ?? 'running').toUpperCase()}  time: ${simulation.elapsedSeconds.toFixed(2)}s  frames: ${simulation.frames}`
+  );
+  if (result.reason) lines.push(`reason: ${result.reason}`);
+  appendTacticalReport(lines, result);
 
-  for (let step = 0; step < steps; step++) {
-    tick++;
-    for (let pi = 0; pi < players.length; pi++) {
-      const p = players[pi];
-      p.body.mass = TUNING.player.mass;
-      let raw;
-      if (p.control === 'ai') {
-        raw = computeAICommands(p, ball, {
-          players,
-          playerIndex: pi,
-          dt,
-          defendZSign: Math.sign(p.spawnZ),
-          teamState: teamState(p.team),
-          tick,
-          profile: p.difficulty ? AI_DIFFICULTY[p.difficulty] : undefined,
-        });
-      } else {
-        raw = scriptedCommands(p, ball);
-        p.ai.action = p.control;
-      }
-
-      const key = `${p.team}:${p.heroKind}#${pi}`;
-      const counts = actionFrames.get(key) ?? {};
-      counts[p.ai.action] = (counts[p.ai.action] ?? 0) + 1;
-      actionFrames.set(key, counts);
-
-      p.body.vx += raw.moveX * TUNING.player.accel * dt;
-      p.body.vz += raw.moveZ * TUNING.player.accel * dt;
-
-      const powerPressed = raw.power && !p.powerHeld;
-      p.powerHeld = raw.power;
-      if (powerPressed) powerEvents.set(key, (powerEvents.get(key) ?? 0) + 1);
-      p.hero.update(dt, { ...raw, powerPressed }, ball);
-
-      integrate(p.body, dt, TUNING.player.damping);
-      collidePlayerBounds(p.body, 0.2);
-      collideGoalPosts(p.body, 0.2);
-
-      const fx = ball.x - p.body.x;
-      const fz = ball.z - p.body.z;
-      const fl = Math.hypot(fx, fz);
-      if (fl > 0.001) {
-        p.facingX = fx / fl;
-        p.facingZ = fz / fl;
-      }
-
-      const shootPressed = raw.shoot && !p.shootHeld;
-      p.shootHeld = raw.shoot;
-      if (shootPressed && isTouching(p.body, ball, TUNING.player.shootRange)) {
-        const dx = Number.isFinite(raw.kickX) ? raw.kickX : ball.x - p.body.x;
-        const dz = Number.isFinite(raw.kickZ) ? raw.kickZ : ball.z - p.body.z;
-        const len = Math.hypot(dx, dz) || 1;
-        const mult = Number.isFinite(raw.kickMultiplier) ? raw.kickMultiplier : 1;
-        const v = TUNING.player.shootVelocity * mult;
-        if (p.hero.captured) p.hero.release(ball);
-        ball.vx += (dx / len) * v;
-        ball.vz += (dz / len) * v;
-        const events = kickEvents.get(key) ?? {};
-        events[p.ai.action] = (events[p.ai.action] ?? 0) + 1;
-        kickEvents.set(key, events);
-      }
-    }
-
-    integrate(ball, dt, TUNING.ball.damping);
-    clampSpeed(ball, TUNING.ball.maxSpeed);
-    collideWalls(ball, TUNING.ball.wallRestitution);
-    collideGoalPosts(ball, TUNING.ball.wallRestitution);
-    for (const p of players) collideCircles(p.body, ball, TUNING.ball.playerRestitution);
-    for (let i = 0; i < players.length; i++) {
-      for (let j = i + 1; j < players.length; j++) {
-        collideCircles(players[i].body, players[j].body, 0.3);
-      }
-    }
-
-    // A ball is "abandoned" once it has sat slow and unclaimed for over 1.5s —
-    // the failure mode where every AI thinks the loose ball is someone else's job.
-    const ballSpeed = Math.hypot(ball.vx, ball.vz);
-    const unclaimed = players.every((p) => Math.hypot(ball.x - p.body.x, ball.z - p.body.z) > 2.0);
-    if (ballSpeed < 0.5 && unclaimed) slowUnclaimedStreak++;
-    else slowUnclaimedStreak = 0;
-    if (slowUnclaimedStreak > 90) abandonedFrames++;
-
-    const scorer = goalScored(ball);
-    if (scorer !== 0) {
-      const goalSign = scorer === 1 ? -1 : 1;
-      const conceding = players.find((p) => Math.sign(p.spawnZ) === goalSign)?.team;
-      score[conceding === 1 ? 2 : 1]++;
-      resetKickoff(ball, players, teamStates);
-      slowUnclaimedStreak = 0;
-    }
-  }
-
-  const finite =
-    Number.isFinite(ball.x) &&
-    Number.isFinite(ball.z) &&
-    players.every((p) => Number.isFinite(p.body.x) && Number.isFinite(p.body.z));
-
-  log(`=== ${label} (${seconds}s) ===`);
-  log(`score red ${score[1]} - blue ${score[2]}   finite: ${finite}`);
-  log(`abandoned-ball frames: ${abandonedFrames} (${((100 * abandonedFrames) / steps).toFixed(1)}%)`);
-  for (const [key, counts] of actionFrames) {
-    const total = Object.values(counts).reduce((a, b) => a + b, 0);
-    const summary = Object.entries(counts)
+  for (const [actorId, actions] of Object.entries(metrics.decisionFrames)) {
+    const total = Object.values(actions).reduce((sum, count) => sum + count, 0);
+    const actionText = Object.entries(actions)
       .sort((a, b) => b[1] - a[1])
-      .map(([name, frames]) => `${name} ${(100 * frames / total).toFixed(0)}%`)
+      .map(([action, count]) => `${action} ${Math.round((count / Math.max(total, 1)) * 100)}%`)
       .join('  ');
-    log(`  ${key}: ${summary}`);
+    lines.push(
+      `  ${actorId}: ${actionText || 'no decisions'}  kicks ${metrics.kicksByActor[actorId] ?? 0}  powers ${metrics.powerUsesByActor[actorId] ?? 0}  contacts ${metrics.contactsByActor[actorId] ?? 0}  saves ${metrics.savesByActor[actorId] ?? 0}  captures ${metrics.capturesByActor[actorId] ?? 0}`
+    );
   }
-  for (const [key, events] of kickEvents) {
-    const summary = Object.entries(events)
-      .map(([name, count]) => `${name} x${count}`)
-      .join('  ');
-    log(`  kicks ${key}: ${summary}   powers x${powerEvents.get(key) ?? 0}`);
-  }
-  log('');
+
+  const notable = result.events.filter((event) =>
+    ['power-used', 'hero-effect', 'ball-capture', 'kick', 'save', 'goal'].includes(event.type)
+  );
+  for (const event of notable) lines.push(`  @${event.time.toFixed(2)}s ${formatEvent(event)}`);
   return lines.join('\n');
 }
 
-export const SCENARIOS = [
-  {
-    label: '1v1 sam vs tesla',
-    specs: [
-      { heroKind: 'sam', team: 1, x: 0, z: 7.8 },
-      { heroKind: 'tesla', team: 2, x: 0, z: -7.8 },
-    ],
-  },
-  {
-    label: '1v1 sam vs tesla (order swapped)',
-    specs: [
-      { heroKind: 'tesla', team: 2, x: 0, z: -7.8 },
-      { heroKind: 'sam', team: 1, x: 0, z: 7.8 },
-    ],
-  },
-  {
-    label: '1v1 sam vs sam',
-    specs: [
-      { heroKind: 'sam', team: 1, x: 0, z: 7.8 },
-      { heroKind: 'sam', team: 2, x: 0, z: -7.8 },
-    ],
-  },
-  {
-    label: '1v1 sam vs sam (order swapped)',
-    specs: [
-      { heroKind: 'sam', team: 2, x: 0, z: -7.8 },
-      { heroKind: 'sam', team: 1, x: 0, z: 7.8 },
-    ],
-  },
-  {
-    label: '1v1 tesla vs tesla',
-    specs: [
-      { heroKind: 'tesla', team: 1, x: 0, z: 7.8 },
-      { heroKind: 'tesla', team: 2, x: 0, z: -7.8 },
-    ],
-  },
-  {
-    label: '1v1 sam vs sam (sides mirrored: red defends -z)',
-    specs: [
-      { heroKind: 'sam', team: 1, x: 0, z: -7.8 },
-      { heroKind: 'sam', team: 2, x: 0, z: 7.8 },
-    ],
-  },
-  {
-    label: '1v1 tesla vs sam',
-    specs: [
-      { heroKind: 'tesla', team: 1, x: 0, z: 7.8 },
-      { heroKind: 'sam', team: 2, x: 0, z: -7.8 },
-    ],
-  },
-  {
-    label: '2v2 mixed',
-    specs: [
-      { heroKind: 'sam', team: 1, x: 0, z: 7.8 },
-      { heroKind: 'tesla', team: 1, x: 2.25, z: 6.4 },
-      { heroKind: 'tesla', team: 2, x: 0, z: -7.8 },
-      { heroKind: 'sam', team: 2, x: -2.25, z: -6.4 },
-    ],
-  },
-  {
-    label: '2v2 long',
-    seconds: 600,
-    specs: [
-      { heroKind: 'sam', team: 1, x: 0, z: 7.8 },
-      { heroKind: 'sam', team: 1, x: 2.25, z: 6.4 },
-      { heroKind: 'tesla', team: 2, x: 0, z: -7.8 },
-      { heroKind: 'tesla', team: 2, x: -2.25, z: -6.4 },
-    ],
-  },
-  {
-    label: '2v2 idle human teammate (red)',
-    specs: [
-      { heroKind: 'sam', team: 1, x: 0, z: 7.8, control: 'idle' },
-      { heroKind: 'tesla', team: 1, x: 2.25, z: 6.4 },
-      { heroKind: 'tesla', team: 2, x: 0, z: -7.8 },
-      { heroKind: 'sam', team: 2, x: -2.25, z: -6.4 },
-    ],
-  },
-  {
-    label: '2v2 chaser human teammate (red)',
-    specs: [
-      { heroKind: 'sam', team: 1, x: 0, z: 7.8, control: 'chaser' },
-      { heroKind: 'tesla', team: 1, x: 2.25, z: 6.4 },
-      { heroKind: 'tesla', team: 2, x: 0, z: -7.8 },
-      { heroKind: 'sam', team: 2, x: -2.25, z: -6.4 },
-    ],
-  },
-  {
-    label: '1v1 hard vs easy',
-    specs: [
-      { heroKind: 'sam', team: 1, x: 0, z: 7.8, difficulty: 'hard' },
-      { heroKind: 'sam', team: 2, x: 0, z: -7.8, difficulty: 'easy' },
-    ],
-  },
-  {
-    label: '2v2 hard vs easy',
-    seconds: 600,
-    specs: [
-      { heroKind: 'sam', team: 1, x: 0, z: 7.8, difficulty: 'hard' },
-      { heroKind: 'tesla', team: 1, x: 2.25, z: 6.4, difficulty: 'hard' },
-      { heroKind: 'tesla', team: 2, x: 0, z: -7.8, difficulty: 'easy' },
-      { heroKind: 'sam', team: 2, x: -2.25, z: -6.4, difficulty: 'easy' },
-    ],
-  },
-];
+function appendTacticalReport(lines, result) {
+  const diagnostics = result.diagnostics ?? {};
+  const metrics = result.metrics ?? {};
+  const phaseHistory = Array.isArray(result.phaseHistory)
+    ? result.phaseHistory
+    : Array.isArray(diagnostics.phaseHistory)
+      ? diagnostics.phaseHistory
+      : Array.isArray(metrics.phaseHistory)
+        ? metrics.phaseHistory
+        : [];
+  const opportunities =
+    result.opportunities ?? diagnostics.opportunities ?? metrics.opportunities ?? {};
+  const probes = diagnostics.probes ?? metrics.probes ?? {};
+  const transitions =
+    diagnostics.actionTransitionsByActor ?? metrics.actionTransitionsByActor ?? {};
+  if (
+    !phaseHistory.length &&
+    !Object.keys(opportunities).length &&
+    !Object.keys(probes).length &&
+    !Object.keys(transitions).length
+  ) {
+    return;
+  }
 
-// Guard that the 'medium' profile is a behavioral no-op: a match with an explicit
-// medium profile must replay identically to one with no profile passed at all.
-function runIdentityCheck() {
-  const specs = [
-    { heroKind: 'sam', team: 1, x: 0, z: 7.8 },
-    { heroKind: 'sam', team: 2, x: 0, z: -7.8 },
-  ];
-  const implicit = runMatch('medium identity', specs, 120);
-  const explicit = runMatch(
-    'medium identity',
-    specs.map((spec) => ({ ...spec, difficulty: 'medium' })),
-    120
-  );
-  return `=== medium identity check ===\nidentical: ${implicit === explicit}\n`;
+  lines.push('tactical diagnostics:');
+  for (const entry of phaseHistory) {
+    const verb = entry.type === 'phase-complete' ? 'completed' : 'started';
+    const reason = entry.reason ? ` · ${entry.reason}` : '';
+    lines.push(
+      `  phase @${formatDiagnosticTime(entry.time)} ${entry.phaseId || 'unknown'} ${verb}${reason}`
+    );
+  }
+
+  for (const [key, opportunity] of Object.entries(opportunities)) {
+    const label = opportunity?.label || opportunity?.id || key;
+    const windows = Array.isArray(opportunity?.windows) ? opportunity.windows : [];
+    const formatted = windows.map((window) => {
+      const end = window.closedAt != null && Number.isFinite(Number(window.closedAt))
+        ? formatDiagnosticTime(window.closedAt)
+        : 'open';
+      return `${formatDiagnosticTime(window.openedAt)}–${end}`;
+    });
+    if (opportunity?.open && !windows.some((window) => window?.closedAt == null)) {
+      formatted.push(`${formatDiagnosticTime(opportunity.openedAt)}–open`);
+    }
+    lines.push(`  opportunity ${label}: ${formatted.join(', ') || 'no window'}`);
+  }
+
+  for (const [key, probe] of Object.entries(probes)) {
+    const label = probe?.label || probe?.id || key;
+    const measure = probe?.measure ? ` ${probe.measure}` : '';
+    lines.push(
+      `  probe ${label}: n=${probe?.samples ?? 0} min=${formatDiagnosticNumber(probe?.min)} max=${formatDiagnosticNumber(probe?.max)} avg=${formatDiagnosticNumber(probe?.average)} last=${formatDiagnosticNumber(probe?.last)}${measure}`
+    );
+  }
+
+  for (const [actorId, actorTransitions] of Object.entries(transitions)) {
+    if (!Array.isArray(actorTransitions) || !actorTransitions.length) continue;
+    const path = actorTransitions
+      .map((transition) => {
+        const from = transition.from ? `${transition.from} -> ` : '';
+        const phase = transition.tacticalPhaseId ? ` [${transition.tacticalPhaseId}]` : '';
+        return `@${formatDiagnosticTime(transition.time)} ${from}${transition.to || 'unknown'}${phase}`;
+      })
+      .join('  ');
+    lines.push(`  actions ${actorId}: ${path}`);
+  }
 }
 
-export async function runAllScenarios(onProgress) {
-  const reports = [];
-  const total = SCENARIOS.length + 1;
-  for (let i = 0; i < SCENARIOS.length; i++) {
-    const scenario = SCENARIOS[i];
-    await onProgress?.(i, total, scenario.label);
-    reports.push(runMatch(scenario.label, scenario.specs, scenario.seconds ?? 180));
+function formatDiagnosticTime(value) {
+  const number = Number(value);
+  return `${(Number.isFinite(number) ? Math.max(0, number) : 0).toFixed(2)}s`;
+}
+
+function formatDiagnosticNumber(value) {
+  if (value == null || value === '') return '—';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '—';
+  const absolute = Math.abs(number);
+  return absolute >= 100 ? number.toFixed(0) : absolute >= 10 ? number.toFixed(1) : number.toFixed(2);
+}
+
+function formatEvent(event) {
+  if (event.type === 'power-used') return `${event.actorId} used power during ${event.action}`;
+  if (event.type === 'hero-effect') return `${event.actorId} effect ${event.effect}`;
+  if (event.type === 'ball-capture') return `${event.actorId} captured the ball`;
+  if (event.type === 'kick') {
+    const receiver = event.intendedReceiverId ? ` to ${event.intendedReceiverId}` : '';
+    return `${event.actorId} kicked (${event.action})${receiver}`;
   }
-  await onProgress?.(SCENARIOS.length, total, 'medium identity check');
-  reports.push(runIdentityCheck());
-  await onProgress?.(total, total, null);
-  return reports.join('\n');
+  if (event.type === 'save') return `${event.actorId} saved a goal-bound ball`;
+  if (event.type === 'goal') return `team ${event.scoringTeam} scored`;
+  return event.type;
 }

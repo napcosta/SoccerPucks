@@ -1,6 +1,68 @@
-param([int]$Port = 0)
+param(
+  [ValidateRange(0, 65535)]
+  [int]$Port = 0,
+  [switch]$NoBrowser
+)
 
 $root = $PSScriptRoot
+$candidates = if ($Port -gt 0) { @($Port) } else { @(8765, 5173, 5500, 8888, 9000, 8080, 8000) }
+
+function Test-LoopbackPort([int]$candidatePort) {
+  $probe = $null
+  try {
+    $probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $candidatePort)
+    $probe.Start()
+    return $true
+  } catch {
+    return $false
+  } finally {
+    if ($null -ne $probe) { $probe.Stop() }
+  }
+}
+
+# Codex Desktop's PowerShell runtime does not support HttpListener. Prefer its
+# bundled Python when available, then fall back to Python installed on PATH.
+$userProfilePath = $env:USERPROFILE
+$bundledPythonPath = Join-Path $userProfilePath '.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+$pythonCommand = $null
+
+if (Test-Path $bundledPythonPath -PathType Leaf) {
+  $pythonCommand = $bundledPythonPath
+} else {
+  foreach ($commandName in @('python', 'python3', 'py')) {
+    $resolvedCommand = Get-Command $commandName -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($resolvedCommand) {
+      $pythonCommand = $resolvedCommand.Source
+      break
+    }
+  }
+}
+
+if ($pythonCommand) {
+  $Port = 0
+  foreach ($candidate in $candidates) {
+    if (Test-LoopbackPort $candidate) {
+      $Port = $candidate
+      break
+    }
+  }
+
+  if ($Port -eq 0) {
+    Write-Host 'Could not start a local server because the requested ports are busy.'
+    Write-Host 'Close another dev server, or run: .\serve.ps1 -Port 9123'
+    exit 1
+  }
+
+  $url = "http://localhost:$Port/"
+  Write-Host "Serving $root with Python"
+  Write-Host "Open $url"
+  Write-Host 'Press Ctrl+C to stop.'
+  if (-not $NoBrowser) { Start-Process $url }
+
+  & $pythonCommand -m http.server $Port --bind 127.0.0.1 --directory $root
+  exit $LASTEXITCODE
+}
+
 $mime = @{
   '.html' = 'text/html; charset=utf-8'
   '.css'  = 'text/css; charset=utf-8'
@@ -34,7 +96,6 @@ function New-GameListener([int]$port) {
   return $listener
 }
 
-$candidates = if ($Port -gt 0) { @($Port) } else { @(8765, 5173, 5500, 8888, 9000, 8080, 8000) }
 $listener = $null
 $Port = 0
 
@@ -60,7 +121,7 @@ $url = "http://localhost:$Port/"
 Write-Host "Serving $root"
 Write-Host "Open $url"
 Write-Host 'Press Ctrl+C to stop.'
-Start-Process $url
+if (-not $NoBrowser) { Start-Process $url }
 
 function Send-Response($request, $response, [int]$status, [byte[]]$bytes) {
   $response.StatusCode = $status

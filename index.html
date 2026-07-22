@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Soccer Pucks</title>
-<link rel="stylesheet" href="css/style.css?v=ui-refresh-1" />
+<link rel="stylesheet" href="css/style.css?v=ai-eval-1" />
 <script type="importmap">
 {
   "imports": {
@@ -80,6 +80,18 @@
   <button id="match-hint" class="hidden" type="button" aria-label="Open game menu">
     <kbd>Esc</kbd> Game menu
   </button>
+  <section id="ai-scenario-hud" class="hidden" aria-label="AI scenario progress">
+    <div class="ai-scenario-hud-copy">
+      <span class="ai-scenario-hud-kicker">AI evaluation</span>
+      <strong id="ai-scenario-hud-title">Scenario</strong>
+      <span id="ai-scenario-hud-phase" aria-live="polite">Stage · Preparing</span>
+      <span id="ai-scenario-hud-objective">Waiting to start</span>
+    </div>
+    <div class="ai-scenario-hud-meta">
+      <span id="ai-scenario-hud-time">0.0 / 0.0s</span>
+      <button id="ai-scenario-stop-btn" class="tiny-btn danger-btn" type="button">Stop test</button>
+    </div>
+  </section>
   <div id="banner" class="hidden" role="status" aria-live="assertive" aria-atomic="true"></div>
 </div>
 
@@ -138,6 +150,42 @@
         </section>
       </div>
     </div>
+  </div>
+</div>
+
+<div id="ai-review-panel" class="hidden" aria-hidden="true">
+  <div id="ai-review-shell" role="dialog" aria-modal="true" aria-labelledby="ai-review-title" aria-describedby="ai-review-description">
+    <header class="ai-review-header">
+      <div>
+        <span class="host-panel-kicker">Scenario complete</span>
+        <h2 id="ai-review-title">Score this AI run</h2>
+        <p id="ai-review-description">Keep the automated outcome and add your assessment of what you observed.</p>
+      </div>
+      <span id="ai-review-status" class="status-chip">Ready to review</span>
+    </header>
+    <section id="ai-review-outcome" class="ai-review-outcome" aria-live="polite">
+      <span id="ai-review-outcome-label">Outcome</span>
+      <strong id="ai-review-outcome-title">Test complete</strong>
+      <p id="ai-review-outcome-reason"></p>
+      <dl class="ai-review-metrics">
+        <div><dt>Simulated time</dt><dd id="ai-review-time">0.0s</dd></div>
+        <div><dt>Key events</dt><dd id="ai-review-events">0</dd></div>
+      </dl>
+    </section>
+    <section id="ai-review-diagnostics" class="ai-review-diagnostics hidden" aria-label="Tactical run diagnostics"></section>
+    <form id="ai-review-form" novalidate>
+      <div id="ai-review-criteria" class="ai-review-criteria"></div>
+      <label class="ai-review-notes">
+        <span>Notes <small>optional</small></span>
+        <textarea id="ai-review-notes" rows="3" maxlength="1000" placeholder="What looked convincing, late, wasteful, or exploitable?"></textarea>
+      </label>
+      <p id="ai-review-error" class="ai-review-error" role="alert"></p>
+      <div class="ai-review-actions">
+        <button id="ai-review-discard-btn" class="tiny-btn" type="button">Discard run</button>
+        <button id="ai-review-retry-btn" class="tiny-btn" type="button">Run again</button>
+        <button id="ai-review-save-btn" class="start-btn" type="submit">Save score</button>
+      </div>
+    </form>
   </div>
 </div>
 
@@ -261,19 +309,58 @@
     <div class="menu-panel-header">
       <div class="focused-panel-header">
         <span class="menu-panel-kicker">Developer tools</span>
-        <h2 id="ai-test-title" tabindex="-1">AI simulations</h2>
-        <p>Watch one scenario or run the complete headless suite.</p>
+        <h2 id="ai-test-title" tabindex="-1">AI evaluation lab</h2>
+        <p>Run staged tactical behaviours, score what you observe, and compare the AI over time.</p>
       </div>
       <div class="menu-panel-header-actions">
         <span id="ai-test-status" class="status-chip" role="status" aria-live="polite" aria-atomic="true">Idle</span>
         <button id="close-ai-tests-btn" class="tiny-btn back-btn" type="button"><span aria-hidden="true">&larr;</span> Back</button>
       </div>
     </div>
-    <div id="ai-test-scenarios"></div>
-    <pre id="ai-test-output">Watch runs a scenario live in the stadium with every player AI-controlled. Run All simulates them headless and prints score, action distribution and kick/power counts per player.</pre>
-    <div class="online-actions">
-      <button id="run-ai-tests-btn" class="start-btn" type="button">Run all headless</button>
+    <div class="ai-test-toolbar">
+      <div class="ai-test-tabs" role="tablist" aria-label="AI evaluation views">
+        <button id="ai-scenarios-tab" class="ai-test-tab selected" type="button" role="tab" aria-selected="true" aria-controls="ai-scenarios-view">Scenarios</button>
+        <button id="ai-results-tab" class="ai-test-tab" type="button" role="tab" aria-selected="false" aria-controls="ai-results-view" tabindex="-1">Results</button>
+      </div>
+      <div class="ai-test-run-settings">
+        <label>Difficulty
+          <select id="ai-test-difficulty">
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard" selected>Hard</option>
+          </select>
+        </label>
+        <label>AI revision
+          <input id="ai-test-revision" type="text" value="baseline" maxlength="40" spellcheck="false" />
+        </label>
+      </div>
     </div>
+    <section id="ai-scenarios-view" role="tabpanel" aria-labelledby="ai-scenarios-tab">
+      <div id="ai-test-overview" class="ai-test-overview" aria-live="polite"></div>
+      <div id="ai-test-scenarios"></div>
+      <details id="ai-regression-panel" class="ai-regression-panel">
+        <summary>Automated regression report</summary>
+        <p>Runs every staged tactical scenario headlessly at 60 Hz. Failures are useful evidence: the report keeps stage, opportunity, probe, and decision-transition context.</p>
+        <pre id="ai-test-output">No regression run yet.</pre>
+        <div class="online-actions">
+          <button id="run-ai-tests-btn" class="start-btn" type="button">Run all headless</button>
+        </div>
+      </details>
+    </section>
+    <section id="ai-results-view" class="hidden" role="tabpanel" aria-labelledby="ai-results-tab">
+      <div class="ai-results-toolbar">
+        <label>Scenario
+          <select id="ai-results-filter"><option value="all">All scenarios</option></select>
+        </label>
+        <span id="ai-results-count" class="status-chip">0 scored runs</span>
+      </div>
+      <div id="ai-results-summary" class="ai-results-summary"></div>
+      <div id="ai-results-history" class="ai-results-history"></div>
+      <div class="online-actions">
+        <button id="ai-results-clear-btn" class="tiny-btn danger-btn" type="button">Clear all results</button>
+        <button id="ai-results-export-btn" class="tiny-btn" type="button">Export all JSON</button>
+      </div>
+    </section>
   </div>
   <div id="local-panel" class="hidden" aria-labelledby="local-panel-title">
     <div class="menu-panel-header">
@@ -397,6 +484,6 @@
 </div>
 
 <script type="module" src="src/brand-ball.js?v=game-ball-14"></script>
-<script type="module" src="src/main.js?v=ui-refresh-1"></script>
+<script type="module" src="src/main.js?v=ai-eval-1"></script>
 </body>
 </html>

@@ -46,6 +46,32 @@ the sandbox. Then verify with:
 Invoke-WebRequest http://127.0.0.1:8000/ -UseBasicParsing
 ```
 
+## AI evaluation lab
+
+The **AI sim tests** link on the main menu opens a focused scenario lab. Unlike a full 1v1 or
+2v2 match, each scenario starts the ball and heroes in a deliberate position and stops as soon as
+its success, failure, or timeout condition is reached.
+
+The catalog covers advantageous Tesla power use, power restraint, passing under pressure, creating
+and taking a shooting lane, and defending a goal-bound shot. Version 2 scenarios are staged tactical
+sequences rather than instant action checks: cards preview the journey, the live HUD follows the
+current tactical stage, and the review shows the opportunities, measurements, and decision changes
+that led to the result. After a stadium run ends, the reviewer scores decision quality, timing,
+execution, and credibility from 1–5 and can add notes.
+
+Scores are stored locally in the browser with the selected difficulty and an AI revision label.
+The Results tab keeps automatic success rate, human averages, per-criterion averages, recent
+trend, and run history scoped to the currently selected revision and difficulty, so unlike test
+configurations are never blended. If durable browser storage is unavailable, the lab explicitly warns
+that the score will last only for the current session. Results can be exported as JSON before changing
+the AI or tuning. The standalone [ai-sim-test.html](ai-sim-test.html) page runs the same catalog
+headlessly at a fixed 60 Hz and prints stage transitions, opportunity windows, probes, and action
+transitions when available. These tests are intentionally challenging. A failure or timeout is not
+necessarily a broken harness; its tactical trace is evidence about where the current AI needs work.
+
+Scenario definitions live in `src/ai-scenarios.js`; condition evaluation and structured event
+tracking live in `src/ai-scenario-runtime.js`.
+
 ## Play online
 
 **https://napcosta.github.io/SoccerPucks/**

@@ -3,34 +3,38 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AI Simulations · Soccer Pucks</title>
-    <link rel="stylesheet" href="css/style.css?v=ui-refresh-1" />
+    <title>AI Scenario Regressions · Soccer Pucks</title>
+    <link rel="stylesheet" href="css/style.css?v=ai-eval-1" />
   </head>
   <body class="sim-page">
     <main class="sim-shell">
       <header class="sim-header">
         <div>
           <span class="sim-kicker">Developer tools</span>
-          <h1>AI simulation report</h1>
-          <p>Headless gameplay checks for positioning, actions, kicks, and powers.</p>
+          <h1>AI scenario regression report</h1>
+          <p>Staged tactical checks with phase, opportunity, probe, and decision-transition diagnostics.</p>
         </div>
         <a class="tiny-btn sim-back" href="./"><span aria-hidden="true">&larr;</span> Back to game</a>
       </header>
-      <p id="sim-status" class="sim-status" role="status" aria-live="polite" aria-atomic="true">Running simulation suite…</p>
+      <p id="sim-status" class="sim-status" role="status" aria-live="polite" aria-atomic="true">Running staged tactical suite…</p>
       <pre id="sim-output"></pre>
     </main>
 
     <script type="module">
-      import { runAllScenarios } from './ai-sim-test.mjs';
+      import { formatSuiteReport, runAllScenarioResults } from './ai-sim-test.mjs';
 
       const output = document.getElementById('sim-output');
       const status = document.getElementById('sim-status');
       try {
-        output.textContent = await runAllScenarios();
-        status.textContent = 'Simulation suite complete';
+        const results = await runAllScenarioResults();
+        output.textContent = formatSuiteReport(results);
+        const failed = results.filter((result) => result.outcome !== 'success').length;
+        status.textContent = failed === 0
+          ? `All ${results.length} tactical scenarios passed`
+          : `${failed} of ${results.length} tactical scenarios need attention`;
       } catch (error) {
         output.textContent = `Simulation failed\n\n${error?.stack || error}`;
-        status.textContent = 'Simulation suite failed';
+        status.textContent = 'Scenario suite failed';
       }
     </script>
   </body>

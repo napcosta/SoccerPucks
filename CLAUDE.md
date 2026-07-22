@@ -35,7 +35,17 @@ must stay dumb renderers of the host's state, not run their own physics/AI.
 
 ## AI sim harness
 
-`ai-sim-test.mjs` runs headless AI-vs-AI match scenarios against `physics.js`/`ai.js` without
-Three.js. Open `ai-sim-test.html` through the dev server (not `node ai-sim-test.mjs` directly —
-it's structured as a browser module) to see `runAllScenarios()` output. Use this to sanity-check
-AI behavior changes before testing in the full game.
+`src/ai-scenarios.js` defines short, custom-positioned behavior scenarios with stable IDs,
+structured completion rules, and review rubrics. `src/ai-scenario-runtime.js` runs them at a fixed
+60 Hz against the production physics/AI/hero logic and emits decision, kick, power, possession,
+contact, save, and goal events. `ai-sim-test.mjs` is the compatibility/report facade.
+
+Version 2 scenarios can define ordered `phases`, opportunity windows, numeric probes, and scripted
+tactical build-up. Runtime lifecycle state and tactical stage are deliberately separate: UI code
+must read `progress.tacticalPhase`, never reinterpret `progress.phase`. The focused tests are meant
+to expose weak decisions, so a deterministic failure can be a valid and useful regression result.
+
+Open `ai-sim-test.html` through the dev server for the headless regression report, or use **AI sim
+tests** on the game menu to watch a scenario in the stadium and record a human score. Live and
+headless runs share scenario definitions and terminal conditions. Evaluation records are
+versioned, stored in browser localStorage, and exportable from the Results tab.

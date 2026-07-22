@@ -13,6 +13,12 @@ import {
 } from './physics.js';
 import { readCommands } from './input.js?v=ui-focused-9';
 import { computeAICommands, createTeamAIState, resetTeamAIState, AI_DIFFICULTY } from './ai.js';
+import {
+  computeScenarioScriptCommands,
+  createScenarioTracker,
+  projectedGoalTeam,
+  SCENARIO_DT,
+} from './ai-scenario-runtime.js';
 import { createHero } from './heroes.js';
 import { cloneHeroScene, tintHero, footLift } from './assets.js';
 import { spawnDashSmoke, createMagnetFieldFX, spawnForceFieldFX } from './effects.js';
@@ -77,6 +83,8 @@ export class Game {
     timeLimitSeconds = MATCH.duration,
     scoreLimit = MATCH.scoreLimit,
     aiDifficulty = 'medium',
+    scenario = null,
+    onScenarioComplete = null,
   }) {
     this.scene = scene;
     this.camera = camera;
@@ -89,6 +97,20 @@ export class Game {
     this.authoritative = authoritative;
     this.inputProvider = inputProvider;
     this.aiDifficulty = AI_DIFFICULTY[aiDifficulty] ? aiDifficulty : 'medium';
+    this.scenario = scenario;
+    this.onScenarioComplete = typeof onScenarioComplete === 'function' ? onScenarioComplete : null;
+    this.scenarioMode = Boolean(scenario);
+    this.scenarioAuthoritative = this.scenarioMode && authoritative;
+    this.scenarioTracker = null;
+    this.scenarioAccumulator = 0;
+    this.scenarioElapsed = 0;
+    this.scenarioMaxSeconds = scenarioMaxSeconds(scenario);
+    this.scenarioReadySeconds = scenarioReadySeconds(scenario);
+    this.scenarioReadyRemaining = this.scenarioReadySeconds;
+    this.scenarioFinished = false;
+    this.scenarioResult = null;
+    this.scenarioCallbackSent = false;
+    this.scenarioGoalRecorded = false;
 
     this.state = 'kickoff';
     this.stateTimer = MATCH.kickoffDelay;
@@ -112,36 +134,43 @@ export class Game {
     this.onSoundEvent = null;
 
     this.ball = this.createBall();
+    const scenarioSpecs = this.scenarioMode ? scenarioPlayerSpecs(scenario) : [];
     const specs =
       playerSpecs ??
-      [
-        { heroKind: playerHero, team: TEAM.RED, spawnX: 0, spawnZ: SPAWN_Z, control: 'local' },
-        {
-          heroKind: playerHero === 'sam' ? 'tesla' : 'sam',
-          team: TEAM.BLUE,
-          spawnX: 0,
-          spawnZ: -SPAWN_Z,
-          control: 'ai',
-        },
-      ];
+      (scenarioSpecs.length > 0
+        ? scenarioSpecs
+        : [
+            { heroKind: playerHero, team: TEAM.RED, spawnX: 0, spawnZ: SPAWN_Z, control: 'local' },
+            {
+              heroKind: playerHero === 'sam' ? 'tesla' : 'sam',
+              team: TEAM.BLUE,
+              spawnX: 0,
+              spawnZ: -SPAWN_Z,
+              control: 'ai',
+            },
+          ]);
     this.players = specs.map((spec, index) =>
       this.createPlayer(
         spec.heroKind,
         spec.team,
         spec.spawnX ?? 0,
         spec.spawnZ,
-        spec.control,
+        spec.control ?? spec.controller,
         spec.nickname ?? `Player ${index + 1}`,
-        index
+        index,
+        spec
       )
     );
 
     this.aiTick = 0;
     this.aiTeamStates = new Map();
 
-    this.resetPositions();
+    if (this.scenarioAuthoritative) this.resetScenarioState();
+    else this.resetPositions();
     this.updateHud();
-    if (this.authoritative) this.showBanner('KICK OFF', MATCH.kickoffDelay * 0.8);
+    if (this.authoritative && !this.scenarioMode) {
+      this.showBanner('KICK OFF', MATCH.kickoffDelay * 0.8);
+    }
   }
 
   createBall() {
@@ -173,7 +202,16 @@ export class Game {
     };
   }
 
-  createPlayer(heroKind, team, spawnX, spawnZ, control = 'ai', nickname = 'Player', index = 0) {
+  createPlayer(
+    heroKind,
+    team,
+    spawnX,
+    spawnZ,
+    control = 'ai',
+    nickname = 'Player',
+    index = 0,
+    spec = {}
+  ) {
     const gltfSource = heroGltfSource(this.assets, heroKind);
     const mesh = cloneHeroScene(gltfSource);
     const meshScale = (PLAYER.radius * 2) / 2.96;
@@ -195,10 +233,15 @@ export class Game {
     actions.Idle?.play();
 
     const player = {
+      id: normalizePlayerId(spec.id ?? spec.scenarioActorId, index),
+      scenarioActorId: normalizePlayerId(spec.scenarioActorId ?? spec.id, index),
       heroKind,
       nickname,
       team,
       control,
+      difficulty: normalizeAIDifficulty(spec.difficulty),
+      defendZSign: normalizeDefendZSign(spec.defendZSign, spawnZ),
+      explicitDefendZSign: Number(spec.defendZSign) === -1 || Number(spec.defendZSign) === 1,
       isHuman: control === 'local',
       isRemote: control === 'remote',
       spawnX,
@@ -221,7 +264,7 @@ export class Game {
       visualZ: spawnZ,
       surfaceY,
     };
-    player.onPowerFX = (type) => this.spawnPowerFX(player, type);
+    player.onPowerFX = (type) => this.handlePlayerPowerFX(player, type);
     player.hero = createHero(heroKind, player);
     if (heroKind === 'tesla') {
       player.antennaFX = createTeslaAntennaFX(mesh);
@@ -267,7 +310,105 @@ export class Game {
     }
   }
 
+  resetScenarioState() {
+    if (!this.scenarioAuthoritative) return;
+
+    clearTimeout(this.bannerTimeout);
+    this.aiTick = 0;
+    this.aiTeamStates.clear();
+    this.scenarioAccumulator = 0;
+    this.scenarioElapsed = 0;
+    this.scenarioReadyRemaining = this.scenarioReadySeconds;
+    this.scenarioFinished = false;
+    this.scenarioResult = null;
+    this.scenarioCallbackSent = false;
+    this.scenarioGoalRecorded = false;
+    this.score[TEAM.RED] = 0;
+    this.score[TEAM.BLUE] = 0;
+    this.goldenGoal = false;
+    this.timeLeft = this.scenarioMaxSeconds;
+
+    for (const p of this.players) resetHeroState(p.hero);
+    this.resetPositions();
+
+    const actors = scenarioActors(this.scenario);
+    for (let index = 0; index < this.players.length; index++) {
+      const p = this.players[index];
+      p.ai = { intent: 'attackBall', intentAge: 0, intentScore: 0 };
+      const actor = findScenarioActor(actors, p.id, index);
+      if (!actor) continue;
+
+      p.scenarioActorId = normalizePlayerId(actor.id, index);
+      p.scenarioActor = actor;
+
+      const x = scenarioCoordinate(actor, 'x', p.spawnX);
+      const z = scenarioCoordinate(actor, 'z', p.spawnZ);
+      p.body.x = x;
+      p.body.z = z;
+      p.body.vx = scenarioVelocity(actor, 'x', 0);
+      p.body.vz = scenarioVelocity(actor, 'z', 0);
+
+      const defendZSign = scenarioDefendZSign(this.scenario, actor, p.team);
+      if (defendZSign === -1 || defendZSign === 1) {
+        p.defendZSign = defendZSign;
+        p.explicitDefendZSign = true;
+      }
+
+      const difficulty = normalizeAIDifficulty(actor.difficulty);
+      if (difficulty && !p.difficulty) p.difficulty = difficulty;
+      const controller = actor.controller ?? actor.control;
+      if (['local', 'remote', 'ai', 'idle', 'chaser', 'scripted'].includes(controller)) {
+        p.control = controller;
+      }
+
+      const facing = scenarioFacing(actor);
+      if (facing) {
+        p.facingX = facing.x;
+        p.facingZ = facing.z;
+      } else {
+        updateFacingTowardBall(p, this.ball.body);
+      }
+      applyScenarioHeroState(p.hero, actor.heroState ?? actor.initialHeroState);
+      resetVisualPosition(p);
+    }
+
+    applyScenarioBody(this.ball.body, scenarioBall(this.scenario));
+    resetVisualPosition(this.ball);
+    for (let index = 0; index < this.players.length; index++) {
+      const actor = findScenarioActor(actors, this.players[index].id, index);
+      if (!scenarioFacing(actor)) updateFacingTowardBall(this.players[index], this.ball.body);
+    }
+
+    const world = this.scenarioWorld();
+    if (this.scenarioTracker) this.scenarioTracker.reset(world);
+    else this.scenarioTracker = createScenarioTracker(this.scenario, { world });
+
+    this.state = this.scenarioReadyRemaining > 0 ? 'scenario_ready' : 'playing';
+    this.stateTimer = 0;
+    if (this.scenarioReadyRemaining > 0) {
+      this.setBannerState({ visible: true, text: 'GET READY', color: '#ffd84a' });
+    } else {
+      this.hideBanner();
+    }
+    this.updateHud();
+  }
+
+  scenarioWorld() {
+    return {
+      scenario: this.scenario,
+      ball: this.ball.body,
+      players: this.players,
+      tick: this.aiTick,
+      teamStates: this.aiTeamStates,
+    };
+  }
+
   restartMatch() {
+    if (this.scenarioAuthoritative) {
+      this.resetScenarioState();
+      return;
+    }
+
     clearTimeout(this.bannerTimeout);
     this.score[TEAM.RED] = 0;
     this.score[TEAM.BLUE] = 0;
@@ -326,6 +467,10 @@ export class Game {
     }
 
     if (!changed) return;
+    if (this.scenarioAuthoritative) {
+      this.resetScenarioState();
+      return;
+    }
     this.resetPositions();
     if (this.state === 'over') {
       this.updateHud();
@@ -356,14 +501,34 @@ export class Game {
 
     const spawnX = finiteOr(spec.spawnX, player.spawnX);
     const spawnZ = finiteOr(spec.spawnZ, player.spawnZ);
-    if (player.spawnX !== spawnX || player.spawnZ !== spawnZ) {
+    const spawnChanged = player.spawnX !== spawnX || player.spawnZ !== spawnZ;
+    if (spawnChanged) {
       player.spawnX = spawnX;
       player.spawnZ = spawnZ;
       changed = true;
     }
 
-    if (['local', 'remote', 'ai'].includes(spec.control) && player.control !== spec.control) {
-      player.control = spec.control;
+    const requestedControl = spec.controller ?? spec.control;
+    if (
+      ['local', 'remote', 'ai', 'idle', 'chaser', 'scripted'].includes(requestedControl) &&
+      player.control !== requestedControl
+    ) {
+      player.control = requestedControl;
+      changed = true;
+    }
+
+    const explicitDefendZSign = Number(spec.defendZSign);
+    if (explicitDefendZSign === -1 || explicitDefendZSign === 1) {
+      if (player.defendZSign !== explicitDefendZSign || !player.explicitDefendZSign) changed = true;
+      player.defendZSign = explicitDefendZSign;
+      player.explicitDefendZSign = true;
+    } else if (!player.explicitDefendZSign && spawnChanged) {
+      player.defendZSign = normalizeDefendZSign(null, spawnZ);
+    }
+
+    const difficulty = normalizeAIDifficulty(spec.difficulty);
+    if (difficulty && player.difficulty !== difficulty) {
+      player.difficulty = difficulty;
       changed = true;
     }
 
@@ -416,7 +581,7 @@ export class Game {
     player.surfaceY = surfaceY;
     player.headTop = meshTopY(mesh);
     player.hero = createHero(heroKind, player);
-    player.onPowerFX = (type) => this.spawnPowerFX(player, type);
+    player.onPowerFX = (type) => this.handlePlayerPowerFX(player, type);
     if (heroKind === 'tesla') {
       player.antennaFX = createTeslaAntennaFX(mesh);
       player.magnetFX = createMagnetFieldFX(this.scene);
@@ -438,28 +603,32 @@ export class Game {
     if (DEBUG.slowMotion) dt *= 0.25;
 
     if (this.authoritative) {
-      this.stateTimer -= dt;
+      if (this.scenarioMode) {
+        this.updateScenarioSimulation(dt);
+      } else {
+        this.stateTimer -= dt;
 
-      if (this.state === 'kickoff' && this.stateTimer <= 0) {
-        this.state = 'playing';
-        this.hideBanner();
-        this.emitSound('kickoff');
-      } else if (this.state === 'goal' && this.stateTimer <= 0) {
-        this.resetPositions();
-        this.state = 'kickoff';
-        this.stateTimer = MATCH.kickoffDelay;
-        this.showBanner('KICK OFF', MATCH.kickoffDelay * 0.8);
-      } else if (this.state === 'over' && this.stateTimer <= 0) {
-        this.onMatchEnd?.();
-        return;
-      }
+        if (this.state === 'kickoff' && this.stateTimer <= 0) {
+          this.state = 'playing';
+          this.hideBanner();
+          this.emitSound('kickoff');
+        } else if (this.state === 'goal' && this.stateTimer <= 0) {
+          this.resetPositions();
+          this.state = 'kickoff';
+          this.stateTimer = MATCH.kickoffDelay;
+          this.showBanner('KICK OFF', MATCH.kickoffDelay * 0.8);
+        } else if (this.state === 'over' && this.stateTimer <= 0) {
+          this.onMatchEnd?.();
+          return;
+        }
 
-      if (this.state === 'playing') {
-        if (!DEBUG.freezeTimer) this.timeLeft -= dt;
-        this.enforceTimeLimit();
-        this.simulate(dt);
+        if (this.state === 'playing') {
+          if (!DEBUG.freezeTimer) this.timeLeft -= dt;
+          this.enforceTimeLimit();
+          this.simulate(dt);
+        }
       }
-    } else if (this.state === 'playing') {
+    } else if (this.state === 'playing' && !this.scenarioMode) {
       this.predictLocalPlayer(dt);
     }
 
@@ -475,38 +644,216 @@ export class Game {
     this.updateHud();
   }
 
+  updateScenarioSimulation(dt) {
+    if (!this.scenarioAuthoritative || this.scenarioFinished) return;
+
+    if (this.scenarioReadyRemaining > 0) {
+      this.scenarioReadyRemaining -= dt;
+      if (this.scenarioReadyRemaining > 0) return;
+      dt = Math.max(0, -this.scenarioReadyRemaining);
+      this.scenarioReadyRemaining = 0;
+      this.state = 'playing';
+      this.hideBanner();
+      if (dt <= 0) return;
+    }
+    if (this.state !== 'playing') return;
+
+    const fixedDt = SCENARIO_DT;
+    this.scenarioAccumulator += dt;
+    while (this.scenarioAccumulator + 1e-9 >= fixedDt && !this.scenarioFinished) {
+      this.scenarioAccumulator -= fixedDt;
+      this.simulate(fixedDt);
+      const terminal = this.scenarioTracker?.step(fixedDt, this.scenarioWorld()) ?? null;
+      const progress = this.scenarioTracker?.getProgress?.();
+      this.scenarioElapsed = finiteOr(
+        progress?.elapsed ?? progress?.elapsedSeconds,
+        this.scenarioElapsed + fixedDt
+      );
+      this.timeLeft = Math.max(0, this.scenarioMaxSeconds - this.scenarioElapsed);
+      if (terminal) this.finishScenario(this.scenarioTracker?.getResult?.() ?? terminal);
+    }
+  }
+
+  getScenarioProgress() {
+    if (!this.scenarioMode) return null;
+    const trackerProgress = this.scenarioTracker?.getProgress?.() ?? {};
+    return Object.freeze({
+      ...trackerProgress,
+      elapsed: finiteOr(trackerProgress.elapsed ?? trackerProgress.elapsedSeconds, this.scenarioElapsed),
+      maxSeconds: finiteOr(trackerProgress.maxSeconds, this.scenarioMaxSeconds),
+      phase:
+        trackerProgress.phase ??
+        (this.scenarioFinished ? 'complete' : this.state === 'playing' ? 'running' : 'ready'),
+      outcome:
+        trackerProgress.outcome ??
+        trackerProgress.terminal?.outcome ??
+        this.scenarioResult?.outcome ??
+        null,
+    });
+  }
+
+  abortScenario(reason = 'aborted') {
+    if (!this.scenarioAuthoritative || this.scenarioFinished) return false;
+    const terminal = this.scenarioTracker?.abort(String(reason || 'aborted'));
+    this.finishScenario(
+      this.scenarioTracker?.getResult?.() ??
+        terminal ?? {
+          outcome: 'aborted',
+          reason: String(reason || 'aborted'),
+          elapsed: this.scenarioElapsed,
+        }
+    );
+    return true;
+  }
+
+  finishScenario(result) {
+    if (!this.scenarioAuthoritative || this.scenarioFinished) return;
+    this.scenarioFinished = true;
+    this.scenarioResult = result ?? { outcome: 'failed', reason: 'Scenario ended' };
+    this.state = 'scenario_complete';
+    this.stateTimer = 0;
+    this.scenarioAccumulator = 0;
+    const outcome = this.scenarioResult?.outcome;
+    const succeeded = outcome === 'success';
+    const text = succeeded
+      ? 'SCENARIO PASSED'
+      : outcome === 'aborted'
+        ? 'SCENARIO STOPPED'
+        : 'SCENARIO FAILED';
+    this.showBanner(text, 1.4, succeeded ? '#2ee66b' : outcome === 'aborted' ? '#ffd84a' : '#ff6a5e');
+
+    if (this.scenarioCallbackSent) return;
+    this.scenarioCallbackSent = true;
+    try {
+      this.onScenarioComplete?.(this.scenarioResult);
+    } catch (error) {
+      console.error('Scenario completion callback failed', error);
+    }
+  }
+
   commandsForPlayer(p, index, ballBody, dt) {
     if (!isPlayerActive(p)) return { moveX: 0, moveZ: 0, shoot: false, power: false };
 
-    if (p.control === 'local') return this.screenToWorld(readCommands());
+    if (p.control === 'scripted') {
+      const commands = computeScenarioScriptCommands(
+        p,
+        this.scenarioWorld(),
+        this.scenarioTracker?.getProgress?.() ?? {}
+      );
+      this.recordScenarioDecision(p, p.ai.action, commands);
+      return commands;
+    }
+
+    if (p.control === 'idle') {
+      p.ai.intent = 'idle';
+      p.ai.action = 'idle';
+      p.ai.targetX = p.body.x;
+      p.ai.targetZ = p.body.z;
+      this.recordScenarioDecision(p, 'idle', EMPTY_SCREEN_COMMANDS);
+      return EMPTY_SCREEN_COMMANDS;
+    }
+
+    if (p.control === 'chaser') {
+      const commands = chaserCommands(p, ballBody);
+      p.ai.intent = 'attackBall';
+      p.ai.action = 'chaser';
+      p.ai.targetX = ballBody.x;
+      p.ai.targetZ = ballBody.z;
+      this.recordScenarioDecision(p, 'chaser', commands);
+      return commands;
+    }
+
+    if (p.control === 'local') {
+      const commands = this.screenToWorld(readCommands());
+      this.recordScenarioDecision(p, 'local', commands);
+      return commands;
+    }
 
     if (p.control === 'remote') {
       const commands = this.inputProvider?.(p, index) ?? EMPTY_SCREEN_COMMANDS;
-      return this.screenToWorld({
+      const worldCommands = this.screenToWorld({
         moveX: commands.moveX || 0,
         moveZ: commands.moveZ || 0,
         shoot: Boolean(commands.shoot),
         power: Boolean(commands.power),
       });
+      this.recordScenarioDecision(p, 'remote', worldCommands);
+      return worldCommands;
     }
 
-    if (DEBUG.disableAI) return { moveX: 0, moveZ: 0, shoot: false, power: false };
+    if (DEBUG.disableAI) {
+      p.ai.intent = 'disabled';
+      p.ai.action = 'disabled';
+      this.recordScenarioDecision(p, 'disabled', EMPTY_SCREEN_COMMANDS);
+      return EMPTY_SCREEN_COMMANDS;
+    }
     const activePlayers = this.players.filter(isPlayerActive);
-    return computeAICommands(p, ballBody, {
+    const commands = computeAICommands(p, ballBody, {
       players: activePlayers,
       playerIndex: activePlayers.indexOf(p),
       dt,
-      defendZSign: Math.sign(p.spawnZ),
+      defendZSign: p.defendZSign,
       teamState: this.teamAIState(p.team),
       tick: this.aiTick,
       profile: this.aiProfileFor(p),
+    });
+    this.recordScenarioDecision(p, p.ai.action, commands);
+    return commands;
+  }
+
+  recordScenarioDecision(player, action, commands = EMPTY_SCREEN_COMMANDS) {
+    const targetX = finiteOr(player.ai?.targetX, player.body.x);
+    const targetZ = finiteOr(player.ai?.targetZ, player.body.z);
+    this.recordScenarioEvent({
+      type: 'decision',
+      actorId: actorIdForPlayer(player),
+      team: player.team,
+      action: action ?? player.ai?.action ?? 'unknown',
+      intent: player.ai?.intent ?? null,
+      targetX,
+      targetZ,
+      target: { x: targetX, z: targetZ },
+      moveX: finiteOr(commands.moveX, 0),
+      moveZ: finiteOr(commands.moveZ, 0),
+      shoot: Boolean(commands.shoot),
+      power: Boolean(commands.power),
+    });
+  }
+
+  recordScenarioEvent(event) {
+    if (!this.scenarioAuthoritative || this.scenarioFinished || !this.scenarioTracker) return;
+    this.scenarioTracker.record(event);
+  }
+
+  projectedScenarioGoalTeam(ball) {
+    if (!this.scenarioAuthoritative) return null;
+    return projectedGoalTeam(ball, this.scenario?.teams);
+  }
+
+  recordScenarioSaveIfPrevented(player, scoringTeamBefore, method, velocityBefore, ball) {
+    if (!scoringTeamBefore || Number(scoringTeamBefore) === Number(player.team)) return;
+    const scoringTeamAfter = this.projectedScenarioGoalTeam(ball);
+    if (Number(scoringTeamAfter) === Number(scoringTeamBefore)) return;
+    this.recordScenarioEvent({
+      type: 'save',
+      actorId: actorIdForPlayer(player),
+      team: player.team,
+      method,
+      preventedScoringTeam: scoringTeamBefore,
+      againstTeam: scoringTeamBefore,
+      action: player.ai?.action ?? player.control,
+      velocityBefore,
+      velocityAfter: { vx: ball.vx, vz: ball.vz },
+      ballVelocityBefore: velocityBefore,
+      ballVelocityAfter: { vx: ball.vx, vz: ball.vz },
     });
   }
 
   // AI on the human's team never drops below medium — an easy teammate is
   // frustration for the human, not challenge.
   aiProfileFor(p) {
-    const selected = AI_DIFFICULTY[this.aiDifficulty];
+    const selected = AI_DIFFICULTY[p.difficulty] ?? AI_DIFFICULTY[this.aiDifficulty];
+    if (this.scenario && p.difficulty) return selected;
     const hasHumanTeammate = this.players.some(
       (other) => other.team === p.team && other.control !== 'ai' && isPlayerActive(other)
     );
@@ -543,6 +890,7 @@ export class Game {
     const ballBody = this.ball.body;
     const player = TUNING.player;
     const ball = TUNING.ball;
+    const kickersThisStep = new Set();
 
     ballBody.mass = ball.mass;
     for (let i = 0; i < this.players.length; i++) {
@@ -556,9 +904,27 @@ export class Game {
       body.vx += raw.moveX * player.accel * dt;
       body.vz += raw.moveZ * player.accel * dt;
 
+      const goalTeamBeforePower = this.projectedScenarioGoalTeam(ballBody);
+      const ballVelocityBeforePower = { vx: ballBody.vx, vz: ballBody.vz };
+      const wasCaptured = Boolean(p.hero.captured);
       const powerPressed = raw.power && !p.powerHeld;
       p.powerHeld = raw.power;
       p.hero.update(dt, { ...raw, powerPressed }, ballBody);
+      if (wasCaptured && !p.hero.captured) {
+        this.recordScenarioEvent({
+          type: 'ball-release',
+          actorId: actorIdForPlayer(p),
+          team: p.team,
+          heroKind: p.heroKind,
+        });
+      }
+      this.recordScenarioSaveIfPrevented(
+        p,
+        goalTeamBeforePower,
+        'power',
+        ballVelocityBeforePower,
+        ballBody
+      );
 
       integrate(body, dt, player.damping);
       collidePlayerBounds(body, 0.2);
@@ -569,17 +935,52 @@ export class Game {
       const shootPressed = raw.shoot && !p.shootHeld;
       p.shootHeld = raw.shoot;
       if (shootPressed && isTouching(body, ballBody, player.shootRange)) {
+        const goalTeamBeforeKick = this.projectedScenarioGoalTeam(ballBody);
+        const velocityBefore = { vx: ballBody.vx, vz: ballBody.vz };
+        const position = { x: ballBody.x, z: ballBody.z };
         const dx = Number.isFinite(raw.kickX) ? raw.kickX : ballBody.x - body.x;
         const dz = Number.isFinite(raw.kickZ) ? raw.kickZ : ballBody.z - body.z;
         const len = Math.hypot(dx, dz) || 1;
         const kickMultiplier = Number.isFinite(raw.kickMultiplier) ? raw.kickMultiplier : 1;
         const kickVelocity = player.shootVelocity * kickMultiplier;
+        const passPlan = this.aiTeamStates.get(p.team)?.passPlan;
+        const intendedReceiver = p.ai?.action === 'passBall' ? passPlan?.receiver : null;
+        const intendedReceiverId =
+          raw.intendedReceiverId ??
+          raw.receiverId ??
+          raw.targetPlayerId ??
+          (intendedReceiver ? actorIdForPlayer(intendedReceiver) : null);
         if (p.hero.captured) p.hero.release(ballBody);
         for (const other of this.players) {
           if (other !== p && isPlayerActive(other)) other.hero.breakHold(ballBody);
         }
         ballBody.vx += (dx / len) * kickVelocity;
         ballBody.vz += (dz / len) * kickVelocity;
+        kickersThisStep.add(p);
+        this.recordScenarioEvent({
+          type: 'kick',
+          actorId: actorIdForPlayer(p),
+          team: p.team,
+          action: p.ai?.action ?? 'kick',
+          intendedReceiverId,
+          position,
+          direction: { x: dx / len, z: dz / len },
+          directionX: dx / len,
+          directionZ: dz / len,
+          multiplier: kickMultiplier,
+          kickMultiplier,
+          kickVelocity,
+          velocityBefore,
+          velocityAfter: { vx: ballBody.vx, vz: ballBody.vz },
+          ballVelocityAfter: { vx: ballBody.vx, vz: ballBody.vz },
+        });
+        this.recordScenarioSaveIfPrevented(
+          p,
+          goalTeamBeforeKick,
+          'kick',
+          velocityBefore,
+          ballBody
+        );
         this.spawnPowerFX(p, 'shoot');
       }
     }
@@ -588,23 +989,84 @@ export class Game {
     clampSpeed(ballBody, ball.maxSpeed);
     // Only the ball raises the force field — players use collidePlayerBounds.
     const wallHit = collideWalls(ballBody, ball.wallRestitution);
-    if (wallHit && wallHit.impact >= WALL_FX_MIN_IMPACT) this.spawnWallImpactFX(wallHit);
+    if (wallHit) {
+      this.recordScenarioEvent({
+        type: 'wall-contact',
+        x: wallHit.x,
+        z: wallHit.z,
+        normalX: wallHit.nx,
+        normalZ: wallHit.nz,
+        impact: wallHit.impact,
+      });
+      if (wallHit.impact >= WALL_FX_MIN_IMPACT) this.spawnWallImpactFX(wallHit);
+    }
     collideGoalPosts(ballBody, ball.wallRestitution);
 
     for (const p of this.players) {
       if (!isPlayerActive(p)) continue;
-      collideCircles(p.body, ballBody, ball.playerRestitution);
+      // Applying both the kick impulse and a same-frame overlap collision
+      // double-counts the kicker's contact and can bend an aimed shot.
+      if (kickersThisStep.has(p)) continue;
+      const goalTeamBeforeContact = this.projectedScenarioGoalTeam(ballBody);
+      const velocityBefore = { vx: ballBody.vx, vz: ballBody.vz };
+      const contacted = collideCircles(p.body, ballBody, ball.playerRestitution);
+      if (contacted) {
+        this.recordScenarioEvent({
+          type: 'player-ball-contact',
+          actorId: actorIdForPlayer(p),
+          team: p.team,
+          action: p.ai?.action ?? p.control,
+          position: { x: ballBody.x, z: ballBody.z },
+          velocityBefore,
+          velocityAfter: { vx: ballBody.vx, vz: ballBody.vz },
+          ballVelocityBefore: velocityBefore,
+          ballVelocityAfter: { vx: ballBody.vx, vz: ballBody.vz },
+          projectedGoalTeamBefore: goalTeamBeforeContact,
+          projectedGoalTeamAfter: this.projectedScenarioGoalTeam(ballBody),
+        });
+        this.recordScenarioSaveIfPrevented(
+          p,
+          goalTeamBeforeContact,
+          'contact',
+          velocityBefore,
+          ballBody
+        );
+      }
     }
     for (let i = 0; i < this.players.length; i++) {
       if (!isPlayerActive(this.players[i])) continue;
       for (let j = i + 1; j < this.players.length; j++) {
         if (!isPlayerActive(this.players[j])) continue;
-        collideCircles(this.players[i].body, this.players[j].body, 0.3);
+        if (collideCircles(this.players[i].body, this.players[j].body, 0.3)) {
+          this.recordScenarioEvent({
+            type: 'player-contact',
+            actorId: actorIdForPlayer(this.players[i]),
+            otherActorId: actorIdForPlayer(this.players[j]),
+          });
+        }
       }
     }
 
     const scorer = goalScored(ballBody);
-    if (scorer !== 0) this.handleGoal(scorer);
+    if (this.scenarioAuthoritative) {
+      if (scorer !== 0 && !this.scenarioGoalRecorded) {
+        this.scenarioGoalRecorded = true;
+        const scoringTeam = this.projectedScenarioGoalTeam(ballBody) ?? scorer;
+        if (scoringTeam === TEAM.RED || scoringTeam === TEAM.BLUE) this.score[scoringTeam] += 1;
+        this.recordScenarioEvent({
+          type: 'goal',
+          scoringTeam,
+          goalZSign: Math.sign(ballBody.z),
+          position: { x: ballBody.x, z: ballBody.z },
+          velocity: { vx: ballBody.vx, vz: ballBody.vz },
+        });
+        this.emitSound('goal', { team: scoringTeam });
+      } else if (scorer === 0) {
+        this.scenarioGoalRecorded = false;
+      }
+    } else if (scorer !== 0) {
+      this.handleGoal(scorer);
+    }
   }
 
   handleGoal(team) {
@@ -786,6 +1248,29 @@ export class Game {
     );
   }
 
+  handlePlayerPowerFX(player, type) {
+    const baseEvent = {
+      actorId: actorIdForPlayer(player),
+      team: player.team,
+      heroKind: player.heroKind,
+      position: { x: player.body.x, z: player.body.z },
+    };
+    if (type === 'dash' || type === 'magnet_on') {
+      this.recordScenarioEvent({
+        type: 'power-used',
+        power: type,
+        action: player.ai?.action ?? player.control,
+        ready: true,
+        ...baseEvent,
+      });
+    }
+    this.recordScenarioEvent({ type: 'hero-effect', effect: type, ...baseEvent });
+    if (type === 'magnet_capture') {
+      this.recordScenarioEvent({ type: 'ball-capture', method: 'magnet', ...baseEvent });
+    }
+    this.spawnPowerFX(player, type);
+  }
+
   spawnPowerFX(player, type, fromNetwork = false) {
     const soundKind = POWER_SOUND_KIND[type];
     if (!fromNetwork && soundKind) {
@@ -958,15 +1443,21 @@ export class Game {
       scoreLimit: this.scoreLimit,
       score: { red: this.score[TEAM.RED], blue: this.score[TEAM.BLUE] },
       goldenGoal: this.goldenGoal,
+      scenarioProgress: this.scenarioMode ? this.getScenarioProgress() : null,
       banner: this.activeBanner,
       ball: {
         body: serializeBody(this.ball.body),
         heading: this.ball.heading,
       },
       players: this.players.map((p) => ({
+        id: p.id,
+        scenarioActorId: p.scenarioActorId,
         nickname: p.nickname,
         heroKind: p.heroKind,
         team: p.team,
+        control: this.scenarioMode ? p.control : undefined,
+        difficulty: this.scenarioMode ? p.difficulty : undefined,
+        defendZSign: this.scenarioMode ? p.defendZSign : undefined,
         spawnX: p.spawnX,
         spawnZ: p.spawnZ,
         body: serializeBody(p.body),
@@ -992,6 +1483,17 @@ export class Game {
     this.score[TEAM.RED] = snapshot.score.red;
     this.score[TEAM.BLUE] = snapshot.score.blue;
     this.goldenGoal = snapshot.goldenGoal;
+    if (this.scenarioMode && snapshot.scenarioProgress) {
+      this.scenarioElapsed = finiteOr(snapshot.scenarioProgress.elapsed, this.scenarioElapsed);
+      this.scenarioMaxSeconds = finiteOr(
+        snapshot.scenarioProgress.maxSeconds,
+        this.scenarioMaxSeconds
+      );
+      this.scenarioResult = snapshot.scenarioProgress.outcome
+        ? { outcome: snapshot.scenarioProgress.outcome }
+        : null;
+      this.scenarioFinished = snapshot.scenarioProgress.phase === 'complete';
+    }
 
     applyBody(this.ball.body, snapshot.ball.body);
     this.ball.heading = snapshot.ball.heading;
@@ -1000,6 +1502,10 @@ export class Game {
       const p = this.players[i];
       const sp = snapshot.players[i];
       if (!sp) continue;
+      if (this.scenarioMode) {
+        p.id = normalizePlayerId(sp.id, i);
+        p.scenarioActorId = normalizePlayerId(sp.scenarioActorId ?? sp.id, i);
+      }
       this.applyPlayerSpec(p, sp);
       applyBody(p.body, sp.body);
       p.facingX = sp.facingX;
@@ -1316,8 +1822,10 @@ function isPlayerActive(player) {
 
 function normalizeHeroKind(heroKind, fallback = 'sam') {
   if (heroKind === 'tesla') return 'tesla';
+  if (heroKind === 'shaggy') return 'shaggy';
   if (heroKind === 'sam') return 'sam';
-  return fallback === 'tesla' ? 'tesla' : 'sam';
+  if (fallback === 'tesla' || fallback === 'shaggy') return fallback;
+  return 'sam';
 }
 
 function normalizeTimeLimitSeconds(value, fallback = MATCH.duration) {
@@ -1338,6 +1846,165 @@ function normalizeTeamValue(team, fallback = TEAM.RED) {
   if (parsed === TEAM.BLUE) return TEAM.BLUE;
   if (parsed === TEAM.RED) return TEAM.RED;
   return fallback;
+}
+
+function normalizePlayerId(value, index) {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (Number.isFinite(Number(value))) return String(value);
+  return `player-${index + 1}`;
+}
+
+function normalizeAIDifficulty(value) {
+  return typeof value === 'string' && AI_DIFFICULTY[value] ? value : null;
+}
+
+function normalizeDefendZSign(value, spawnZ) {
+  const explicit = Number(value);
+  if (explicit === -1 || explicit === 1) return explicit;
+  return Math.sign(Number(spawnZ)) || 1;
+}
+
+function actorIdForPlayer(player) {
+  return player?.scenarioActorId ?? player?.id ?? null;
+}
+
+function scenarioDefendZSign(scenario, actor, team) {
+  const actorSign = Number(actor?.defendZSign);
+  if (actorSign === -1 || actorSign === 1) return actorSign;
+  const teamSign = Number(scenario?.teams?.[team]?.defendZSign);
+  if (teamSign === -1 || teamSign === 1) return teamSign;
+  return null;
+}
+
+function chaserCommands(player, ball) {
+  const dx = ball.x - player.body.x;
+  const dz = ball.z - player.body.z;
+  const distance = Math.hypot(dx, dz) || 1;
+  const goalZ = -player.defendZSign * PITCH.halfLength;
+  return {
+    moveX: (dx / distance) * 0.8,
+    moveZ: (dz / distance) * 0.8,
+    shoot: isTouching(player.body, ball, TUNING.player.shootRange),
+    kickX: -ball.x,
+    kickZ: goalZ - ball.z,
+    kickMultiplier: 1,
+    power: false,
+  };
+}
+
+function scenarioMaxSeconds(scenario) {
+  if (!scenario) return 0;
+  const value =
+    scenario.maxSeconds ?? scenario.maxTimeSeconds ?? scenario.timeoutSeconds ?? scenario.durationSeconds;
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) return 12;
+  return clamp(seconds, 0.1, 10 * 60);
+}
+
+function scenarioReadySeconds(scenario) {
+  if (!scenario) return 0;
+  const seconds = Number(scenario.readySeconds ?? scenario.liveReadySeconds ?? 1);
+  if (!Number.isFinite(seconds)) return 1;
+  return clamp(seconds, 0, 5);
+}
+
+function scenarioActors(scenario) {
+  if (!scenario) return [];
+  const actors =
+    scenario.actors ??
+    scenario.players ??
+    scenario.specs ??
+    scenario.setup?.actors ??
+    scenario.initial?.players;
+  return Array.isArray(actors) ? actors : [];
+}
+
+function scenarioPlayerSpecs(scenario) {
+  return scenarioActors(scenario).map((actor, index) => {
+    const team = normalizeTeamValue(actor?.team, index % 2 === 0 ? TEAM.RED : TEAM.BLUE);
+    return {
+      ...actor,
+      id: actor?.id,
+      scenarioActorId: actor?.id,
+      heroKind: actor?.heroKind,
+      team,
+      spawnX: scenarioCoordinate(actor, 'x', 0),
+      spawnZ: scenarioCoordinate(actor, 'z', scenarioDefendZSign(scenario, actor, team) * SPAWN_Z),
+      control: actor?.controller ?? actor?.control ?? 'ai',
+      defendZSign: scenarioDefendZSign(scenario, actor, team),
+    };
+  });
+}
+
+function findScenarioActor(actors, playerId, index) {
+  if (!Array.isArray(actors)) return null;
+  const byId = actors.find((actor) => actor && actor.id != null && String(actor.id) === String(playerId));
+  return byId ?? actors[index] ?? null;
+}
+
+function scenarioCoordinate(spec, axis, fallback) {
+  if (!spec) return fallback;
+  const arrayIndex = axis === 'x' ? 0 : 1;
+  const value =
+    spec.position?.[axis] ??
+    spec.initialPosition?.[axis] ??
+    (Array.isArray(spec.position) ? spec.position[arrayIndex] : undefined) ??
+    spec.body?.[axis] ??
+    spec[axis] ??
+    spec[`spawn${axis.toUpperCase()}`];
+  return finiteOr(value, fallback);
+}
+
+function scenarioVelocity(spec, axis, fallback) {
+  if (!spec) return fallback;
+  const arrayIndex = axis === 'x' ? 0 : 1;
+  const value =
+    spec.velocity?.[axis] ??
+    spec.initialVelocity?.[axis] ??
+    (Array.isArray(spec.velocity) ? spec.velocity[arrayIndex] : undefined) ??
+    spec.body?.[`v${axis}`] ??
+    spec[`v${axis}`];
+  return finiteOr(value, fallback);
+}
+
+function scenarioFacing(spec) {
+  if (!spec) return null;
+  let x = spec.facing?.x ?? spec.initialFacing?.x ?? spec.facingX;
+  let z = spec.facing?.z ?? spec.initialFacing?.z ?? spec.facingZ;
+  if (Array.isArray(spec.facing)) {
+    x = spec.facing[0];
+    z = spec.facing[1];
+  }
+  x = Number(x);
+  z = Number(z);
+  const length = Math.hypot(x, z);
+  if (!Number.isFinite(length) || length < 0.001) return null;
+  return { x: x / length, z: z / length };
+}
+
+function scenarioBall(scenario) {
+  return scenario?.ball ?? scenario?.initialBall ?? scenario?.setup?.ball ?? scenario?.initial?.ball ?? null;
+}
+
+function applyScenarioBody(body, spec) {
+  if (!body || !spec) return;
+  body.x = scenarioCoordinate(spec, 'x', body.x);
+  body.z = scenarioCoordinate(spec, 'z', body.z);
+  body.vx = scenarioVelocity(spec, 'x', body.vx);
+  body.vz = scenarioVelocity(spec, 'z', body.vz);
+}
+
+function applyScenarioHeroState(hero, state) {
+  if (!hero || !state || typeof state !== 'object') return;
+  hero.cooldownRemaining = Math.max(
+    0,
+    finiteOr(state.cooldownRemaining ?? state.powerCooldownRemaining, hero.cooldownRemaining)
+  );
+  if ('active' in hero && typeof state.active === 'boolean') hero.active = state.active;
+  if ('holdRemaining' in hero) {
+    hero.holdRemaining = Math.max(0, finiteOr(state.holdRemaining, hero.holdRemaining));
+  }
+  if ('captured' in hero && typeof state.captured === 'boolean') hero.captured = state.captured;
 }
 
 function finiteOr(value, fallback) {

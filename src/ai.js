@@ -44,6 +44,7 @@ const AI = Object.freeze({
   passLaneRadius: 1.0,
   passPlanExtra: 0.4,
   pressureDist: 2.0,
+  defensiveClearThreatRange: 3.4,
   maxHoldTime: 2.4,
   backOffTime: 5.0,
   defensiveThird: 0.4,
@@ -70,13 +71,13 @@ const AI = Object.freeze({
 export const AI_DIFFICULTY = Object.freeze({
   easy: Object.freeze({
     key: 'easy',
-    speedScale: 0.78,
-    reactionTicks: 9,
-    aimJitter: 0.18,
-    shotBias: -0.22,
-    passBias: 0.1,
-    interceptHorizon: 1.6,
-    powerChance: 0.35,
+    speedScale: 0.98,
+    reactionTicks: 0,
+    aimJitter: 0.04,
+    shotBias: 0,
+    passBias: 0,
+    interceptHorizon: 2.2,
+    powerChance: 1,
   }),
   medium: Object.freeze({
     key: 'medium',
@@ -93,8 +94,8 @@ export const AI_DIFFICULTY = Object.freeze({
     speedScale: 1,
     reactionTicks: 0,
     aimJitter: 0,
-    shotBias: 0.05,
-    passBias: -0.06,
+    shotBias: 0,
+    passBias: 0,
     interceptHorizon: 3.4,
     powerChance: 1,
   }),
@@ -205,7 +206,12 @@ export function computeAICommands(player, ball, contextOrDefendZSign = {}) {
 
   let kickX = decision.kickX ?? 0;
   let kickZ = decision.kickZ ?? 0;
-  if (shoot && profile.aimJitter > 0 && (kickX !== 0 || kickZ !== 0)) {
+  if (
+    shoot &&
+    decision.name !== 'passBall' &&
+    profile.aimJitter > 0 &&
+    (kickX !== 0 || kickZ !== 0)
+  ) {
     const angle = (noise01(tick, playerIndex) * 2 - 1) * profile.aimJitter;
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
@@ -315,7 +321,9 @@ function updateTeamState(state, teammates, opponents, ball, defendZSign, attackZ
   const defending =
     oppHasBall || danger > AI.dangerDefend || (!teamHasBall && ball.z * defendZSign > 0.5);
 
-  const humanStriker = Boolean(striker && striker.control !== 'ai');
+  const humanStriker = Boolean(
+    striker && (striker.control === 'local' || striker.control === 'remote')
+  );
   const roles = new Map();
   if (striker) roles.set(striker, { role: ROLE.STRIKER });
   others.forEach((teammate, index) => {
@@ -508,7 +516,7 @@ function possessionDecision(player, world) {
     (pressured || stalled || pass.score > AI.passGreatScore || world.attackingHalf < 0.4)
   ) {
     const action = kickAction(player, world, pass.target, pass.power, 'passBall');
-    if (action.shoot && world.hasBall) {
+    if (action.name === 'passBall' && action.shoot && world.hasBall) {
       world.teamState.passPlan = {
         receiver: pass.receiver,
         target: pass.target,
@@ -518,7 +526,9 @@ function possessionDecision(player, world) {
     return action;
   }
 
-  if (inDefensiveThird && (pressured || stalled)) {
+  const defensiveClearThreat =
+    inDefensiveThird && world.nearestOppToBall < AI.defensiveClearThreatRange;
+  if (inDefensiveThird && (pressured || stalled || defensiveClearThreat)) {
     return kickAction(player, world, clearanceTarget(world), 1.0, 'clearBall');
   }
 
@@ -547,7 +557,7 @@ function kickAction(player, world, target, power, name) {
     const toBall = normalize(ball.x - player.body.x, ball.z - player.body.z);
     const align = toBall.x * kickDir.x + toBall.z * kickDir.z;
     if (align < alignNeeded) {
-      if (contested) {
+      if (contested && name !== 'passBall') {
         if (player.ai.pokeCooldown > 0) {
           return { name: 'contest', target: ball, move: steerToward(player.body, ball) };
         }
@@ -563,15 +573,42 @@ function kickAction(player, world, target, power, name) {
     }
   }
 
+  const kickDirWithMomentum = compensateForBallMomentum(
+    ball,
+    kickDir,
+    TUNING.player.shootVelocity * power
+  );
+
   return {
     name,
     shoot: true,
-    kickX: dx,
-    kickZ: dz,
+    kickX: kickDirWithMomentum.x,
+    kickZ: kickDirWithMomentum.z,
     kickMultiplier: power,
     target,
     move: steerToward(player.body, ball),
   };
+}
+
+function compensateForBallMomentum(ball, desiredDir, kickSpeed) {
+  const vx = Number.isFinite(ball.vx) ? ball.vx : 0;
+  const vz = Number.isFinite(ball.vz) ? ball.vz : 0;
+  const along = vx * desiredDir.x + vz * desiredDir.z;
+  const velocitySq = vx * vx + vz * vz;
+  const lateralSq = Math.max(0, velocitySq - along * along);
+  const remainingSq = kickSpeed * kickSpeed - lateralSq;
+
+  // A kick can only cancel so much sideways momentum. In the rare impossible
+  // case, retain the direct target rather than reversing the intended play.
+  if (remainingSq <= 0) return desiredDir;
+
+  const resultingSpeed = along + Math.sqrt(remainingSq);
+  if (resultingSpeed <= 0.001) return desiredDir;
+
+  return normalize(
+    desiredDir.x * resultingSpeed - vx,
+    desiredDir.z * resultingSpeed - vz
+  );
 }
 
 function pokeAction(player, world, desiredDir) {
@@ -749,7 +786,12 @@ function carryDirection(world) {
 
 function supportDecision(player, world) {
   const target = chooseSupportTarget(player, world);
-  return { name: 'runForSpace', target, move: steerToward(player.body, target) };
+  const teammateControlsBall =
+    world.teamHasBall && world.carrier && world.carrier !== player;
+  const move = teammateControlsBall
+    ? approachAroundBall(player, world.ball, target)
+    : steerToward(player.body, target);
+  return { name: 'runForSpace', target, move };
 }
 
 function chooseSupportTarget(player, world) {
@@ -905,7 +947,12 @@ function shouldUsePower(player, world, decision) {
 
   if (player.heroKind === 'tesla') {
     if (hero.active) return false;
-    if (world.role === ROLE.SUPPORT) return false;
+    const teammateControlsBall =
+      world.teamHasBall &&
+      world.carrier &&
+      world.carrier !== player &&
+      world.teammates.includes(world.carrier);
+    if (teammateControlsBall) return false;
     const contested = world.nearestOppToBall < AI.magnetContestRange;
     const winnable = !world.oppHasBall || world.ballDist < 1.6;
     return winnable && contested && world.ballDist < AI.magnetGrabRange;
